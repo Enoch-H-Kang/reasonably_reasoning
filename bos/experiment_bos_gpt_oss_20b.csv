@@ -1,0 +1,11 @@
+round,player1,player2,answer1,answer2,points1,points2,total1,total2
+1,openai/gpt-oss-20b,openai/gpt-oss-20b,F,J,0,0,0,0
+2,openai/gpt-oss-20b,openai/gpt-oss-20b,J,F,0,0,0,0
+3,openai/gpt-oss-20b,openai/gpt-oss-20b,J,F,0,0,0,0
+4,openai/gpt-oss-20b,openai/gpt-oss-20b,J,J,10,7,10,7
+5,openai/gpt-oss-20b,openai/gpt-oss-20b,F,F,7,10,17,17
+6,openai/gpt-oss-20b,openai/gpt-oss-20b,F,J,0,0,17,17
+7,openai/gpt-oss-20b,openai/gpt-oss-20b,J,J,10,7,27,24
+8,openai/gpt-oss-20b,openai/gpt-oss-20b,F,F,7,10,34,34
+9,openai/gpt-oss-20b,openai/gpt-oss-20b,F,J,0,0,34,34
+10,openai/gpt-oss-20b,openai/gpt-oss-20b,F,J,0,0,34,34
