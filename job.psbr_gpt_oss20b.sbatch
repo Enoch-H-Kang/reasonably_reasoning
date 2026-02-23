@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J repgames_oss20b
+#SBATCH -J psbr_oss20b
 #SBATCH -o %x.%j.out
 #SBATCH -e %x.%j.err
 #SBATCH -p mi2104x
@@ -19,10 +19,12 @@ WORK_ROOT="${WORK:-/work1/krishnamurthy/arvind}"
 REPO_DIR="$WORK_ROOT/repeatedgames"
 cd "$REPO_DIR"
 FIRST_ACTION_MODE="${FIRST_ACTION_MODE:-model}"
+STRATEGY_MEMORY_ROUNDS="${STRATEGY_MEMORY_ROUNDS:-0}"
+COLLUSIVE_MODE="${COLLUSIVE_MODE:-0}"
 
 # Use SLURM job id so submit helpers can deterministically point to runtime logs.
 RUN_ID="${SLURM_JOB_ID}"
-OUT_ROOT="$WORK_ROOT/repeatedgames_runs/$RUN_ID"
+OUT_ROOT="$WORK_ROOT/repeatedgames_runs_psbr/$RUN_ID"
 mkdir -p "$OUT_ROOT"
 
 # Put all logs in run folder.
@@ -32,6 +34,12 @@ echo "OUT_ROOT=$OUT_ROOT"
 echo "HOST=$(hostname)"
 echo "START_TIME=$(date -Iseconds)"
 echo "FIRST_ACTION_MODE=$FIRST_ACTION_MODE"
+echo "STRATEGY_MEMORY_ROUNDS=$STRATEGY_MEMORY_ROUNDS COLLUSIVE_MODE=$COLLUSIVE_MODE"
+
+COLLUSIVE_FLAG=()
+if [[ "$COLLUSIVE_MODE" == "1" ]]; then
+  COLLUSIVE_FLAG+=(--collusive-mode)
+fi
 
 # Use work-backed cache for large model files.
 export HF_HOME="$WORK_ROOT/repeatedgames_cache/hf"
@@ -61,26 +69,32 @@ echo "==========================="
 # Use one GPU process for local HF inference.
 export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
 
-echo "Running repeated BOS + PD with openai/gpt-oss-20b ..."
-python run_gpt_oss_games.py \
+echo "Running PS-BR repeated BOS + PD with openai/gpt-oss-20b ..."
+python run_ps_br_games.py \
   --backend hf-local \
   --game both \
   --model openai/gpt-oss-20b \
-  --rounds 10 \
+  --rounds 50 \
   --first-action-mode "$FIRST_ACTION_MODE" \
+  --ps-samples 4 \
+  --planning-horizon 10 \
+  --discount 1.0 \
+  --sample-temperature 0.3 \
+  --strategy-memory-rounds "$STRATEGY_MEMORY_ROUNDS" \
   --device-map cuda \
   --torch-dtype bfloat16 \
   --mxfp4-dequantize \
   --experts-implementation eager \
   --max-new-tokens 4 \
-  --bos-output "$OUT_ROOT/experiment_bos_gpt_oss_20b.csv" \
-  --pd-output "$OUT_ROOT/experiment_pd_gpt_oss_20b.csv"
+  "${COLLUSIVE_FLAG[@]}" \
+  --bos-output "$OUT_ROOT/experiment_bos_psbr_gpt_oss_20b.csv" \
+  --pd-output "$OUT_ROOT/experiment_pd_psbr_gpt_oss_20b.csv"
 
-# Also publish latest outputs in repo-standard locations.
-cp "$OUT_ROOT/experiment_bos_gpt_oss_20b.csv" "$REPO_DIR/bos/experiment_bos_gpt_oss_20b.csv"
-cp "$OUT_ROOT/experiment_pd_gpt_oss_20b.csv" "$REPO_DIR/pd/experiment_pd_gpt_oss_20b.csv"
+mkdir -p "$REPO_DIR/ps_br"
+cp "$OUT_ROOT/experiment_bos_psbr_gpt_oss_20b.csv" "$REPO_DIR/ps_br/experiment_bos_psbr_gpt_oss_20b.csv"
+cp "$OUT_ROOT/experiment_pd_psbr_gpt_oss_20b.csv" "$REPO_DIR/ps_br/experiment_pd_psbr_gpt_oss_20b.csv"
 
 echo "END_TIME=$(date -Iseconds)"
 echo "Done. Outputs:"
-echo "  $OUT_ROOT/experiment_bos_gpt_oss_20b.csv"
-echo "  $OUT_ROOT/experiment_pd_gpt_oss_20b.csv"
+echo "  $OUT_ROOT/experiment_bos_psbr_gpt_oss_20b.csv"
+echo "  $OUT_ROOT/experiment_pd_psbr_gpt_oss_20b.csv"

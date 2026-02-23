@@ -35,3 +35,65 @@ git clone https://github.com/eliaka/repeatedgames
 cd repeatedgames
 pip install -r requirements.txt
 ```
+
+## GPT-OSS 20B runners
+
+### Standard repeated-game runner
+
+```bash
+python run_gpt_oss_games.py --backend hf-local --game both --model openai/gpt-oss-20b
+```
+
+AMD SLURM submit helper:
+
+```bash
+./submit_repeatedgames_gpt_oss20b.sh
+```
+
+### PS-BR runner (separate)
+
+`run_ps_br_games.py` implements a PS-BR style planner:
+- it samples opponent continuation actions by autoregressive imputation,
+- estimates continuation value for candidate actions `J`/`F`,
+- picks the higher-value action.
+
+```bash
+python run_ps_br_games.py --backend hf-local --game both --model openai/gpt-oss-20b
+```
+
+AMD SLURM submit helper:
+
+```bash
+./submit_psbr_gpt_oss20b.sh
+```
+
+### SCoT runner (separate)
+
+`run_scot_games.py` implements social chain-of-thought prompting:
+- first predict the opponent's next action,
+- then choose your own action conditioned on that prediction.
+
+```bash
+python run_scot_games.py --backend hf-local --game both --model openai/gpt-oss-20b
+```
+
+AMD SLURM submit helper:
+
+```bash
+./submit_scot_gpt_oss20b.sh
+```
+
+### Run both in parallel
+
+Submit both jobs back-to-back:
+
+```bash
+./submit_repeatedgames_gpt_oss20b.sh
+./submit_psbr_gpt_oss20b.sh
+```
+
+### Run base + SCoT + PS-BR in parallel
+
+```bash
+./submit_parallel_gpt_oss20b.sh
+```

@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Run repeated game suites with gpt-oss-20b.
+"""Run repeated games with SCoT prompting using gpt-oss-20b.
 
-Supported games:
-- Battle of the Sexes (BOS)
-- Prisoner's Dilemma (PD)
-- Deadlock
-- Samaritan
-- Lemons
+SCoT procedure each round:
+1) Predict opponent's next action.
+2) Choose own action conditioned on that prediction.
 """
 
 import argparse
@@ -39,7 +36,6 @@ DEFAULT_API_KEY = (
     or os.getenv("OPENROUTER_API_KEY")
     or os.getenv("TOGETHER_API_KEY")
 )
-
 DEFAULT_BASE_URL = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENROUTER_BASE_URL")
 
 
@@ -176,18 +172,26 @@ class RetryConfig:
 
 
 class OpenAIBackend:
-    def __init__(self, client: OpenAI, model_name: str, retry_cfg: RetryConfig, max_new_tokens: int):
+    def __init__(
+        self,
+        client: OpenAI,
+        model_name: str,
+        retry_cfg: RetryConfig,
+        max_new_tokens: int,
+        parse_retries: int,
+    ):
         self.client = client
         self.model_name = model_name
         self.retry_cfg = retry_cfg
         self.max_new_tokens = max_new_tokens
+        self.parse_retries = parse_retries
 
     def choose(self, prompt: str, allowed_actions: List[str]) -> str:
         retries = 0
         attempt_prompt = prompt
-        parse_retries = 2
         parse_failures = 0
         action_hint = ", ".join(allowed_actions)
+
         while retries <= self.retry_cfg.max_retries:
             try:
                 response = self.client.chat.completions.create(
@@ -201,7 +205,7 @@ class OpenAIBackend:
                     return extract_action(content, allowed_actions)
                 except ValueError:
                     parse_failures += 1
-                    if parse_failures > parse_retries:
+                    if parse_failures > self.parse_retries:
                         fallback = deterministic_fallback_action(prompt, allowed_actions)
                         print(
                             "Warning: Could not parse API response after retries; "
@@ -235,13 +239,13 @@ class HuggingFaceLocalBackend:
         torch_dtype: str,
         mxfp4_dequantize: bool,
         experts_implementation: str,
+        parse_retries: int,
     ):
         if hf_pipeline is None:
             raise RuntimeError(
                 "Transformers is not installed. Install with: pip install -U transformers kernels torch"
             )
 
-        # Import torch lazily so openai-compatible mode does not require it.
         import torch
 
         if torch_dtype == "auto":
@@ -251,8 +255,9 @@ class HuggingFaceLocalBackend:
 
         resolved_device_map = None if device_map == "none" else device_map
 
-        self.model_name = model_name
         self.max_new_tokens = max_new_tokens
+        self.parse_retries = parse_retries
+
         if AutoModelForCausalLM is None or AutoTokenizer is None:
             raise RuntimeError("Transformers AutoModel/AutoTokenizer are unavailable in this environment.")
 
@@ -276,8 +281,6 @@ class HuggingFaceLocalBackend:
         self.tokenizer = tokenizer
         self._torch = torch
         self.action_id_cache: dict[Tuple[str, ...], dict[int, str]] = {}
-
-        # Keep text-generation pipeline only as an emergency fallback path.
         self.pipe = hf_pipeline("text-generation", model=model, tokenizer=tokenizer)
 
     def _render_prompt_for_generation(self, prompt: str) -> str:
@@ -360,10 +363,10 @@ class HuggingFaceLocalBackend:
             )
 
         attempt_prompt = prompt
-        parse_retries = 2
         last_content = ""
+
         action_hint = ", ".join(allowed_actions)
-        for _ in range(parse_retries + 1):
+        for _ in range(self.parse_retries + 1):
             input_payload = self._render_prompt_for_generation(attempt_prompt)
             outputs = self.pipe(
                 input_payload,
@@ -402,8 +405,18 @@ class HuggingFaceLocalBackend:
         return fallback
 
 
+class MockBackend:
+    def __init__(self, seed: int):
+        self.rng = random.Random(seed)
+
+    def choose(self, prompt: str, allowed_actions: List[str]) -> str:
+        del prompt
+        if not allowed_actions:
+            raise ValueError("allowed_actions must be non-empty")
+        return self.rng.choice(allowed_actions)
+
+
 def deterministic_fallback_action(prompt: str, allowed_actions: List[str]) -> str:
-    # Stable fallback avoids aborting long runs when a model emits malformed text.
     if not allowed_actions:
         raise ValueError("allowed_actions must be non-empty")
     digest = hashlib.sha256(prompt.encode("utf-8")).digest()
@@ -566,7 +579,7 @@ def append_compact_action_history(
     return history + f"Round {round_idx}: {self_action}, {opp_action}\n"
 
 
-def run_bos(
+def run_bos_scot(
     backend_1,
     backend_2,
     model_name: str,
@@ -586,21 +599,45 @@ def run_bos(
         forced_1 = forced_first_action("bos", player_idx=1, mode=first_action_mode) if round_idx == 1 else None
         forced_2 = forced_first_action("bos", player_idx=2, mode=first_action_mode) if round_idx == 1 else None
 
-        prompt_1 = (
+        pred_prompt_1 = (
             f"{question_1}{history_1}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which Option do you choose, Option J or Option F?\n"
+            "Q: Which Option do you predict the other player will choose, Option J or Option F?\n"
             "A: Option"
         )
-        prompt_2 = (
+        prediction_1 = backend_1.choose(pred_prompt_1, ["J", "F"])
+
+        action_prompt_1 = (
+            f"{question_1}{history_1}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose Option {prediction_1} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (Option J and Option F), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which Option do you think is the best to choose for you in this round, Option J or Option F?\n"
+            "Output only one letter: J or F.\n"
+            "A: Option"
+        )
+        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(action_prompt_1, ["J", "F"])
+
+        pred_prompt_2 = (
             f"{question_2}{history_2}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which Option do you choose, Option J or Option F?\n"
+            "Q: Which Option do you predict the other player will choose, Option J or Option F?\n"
             "A: Option"
         )
+        prediction_2 = backend_2.choose(pred_prompt_2, ["J", "F"])
 
-        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, ["J", "F"])
-        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, ["J", "F"])
+        action_prompt_2 = (
+            f"{question_2}{history_2}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose Option {prediction_2} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (Option J and Option F), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which Option do you think is the best to choose for you in this round, Option J or Option F?\n"
+            "Output only one letter: J or F.\n"
+            "A: Option"
+        )
+        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(action_prompt_2, ["J", "F"])
 
         points_1, points_2 = bos_points(answer_1, answer_2)
         total_1 += points_1
@@ -614,6 +651,8 @@ def run_bos(
                 round_idx,
                 model_name,
                 model_name,
+                prediction_1,
+                prediction_2,
                 answer_1,
                 answer_2,
                 points_1,
@@ -629,6 +668,8 @@ def run_bos(
             "round",
             "player1",
             "player2",
+            "prediction1",
+            "prediction2",
             "answer1",
             "answer2",
             "points1",
@@ -639,7 +680,7 @@ def run_bos(
     )
 
 
-def run_pd(
+def run_pd_scot(
     backend_1,
     backend_2,
     model_name: str,
@@ -662,21 +703,48 @@ def run_pd(
         order = [0, 1]
         random.shuffle(order)
 
-        prompt_1 = (
+        opt1 = options[order[0]]
+        opt2 = options[order[1]]
+
+        pred_prompt_1 = (
             f"{question}{history_1}"
             f"\nYou are currently playing round {round_idx}.\n"
-            f"Q: Which Option do you choose, Option {options[order[0]]} or Option {options[order[1]]}?\n"
+            f"Q: Which Option do you predict the other player will choose, Option {opt1} or Option {opt2}?\n"
             "A: Option"
         )
-        prompt_2 = (
+        prediction_1 = backend_1.choose(pred_prompt_1, ["J", "F"])
+
+        action_prompt_1 = (
+            f"{question}{history_1}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose Option {prediction_1} in round {round_idx}, "
+            f"imagine the outcome for both of your possible actions (Option {opt1} and Option {opt2}), "
+            "compare which gives you a better result, and then choose.\n"
+            f"Which Option do you think is the best to choose for you in this round, Option {opt1} or Option {opt2}?\n"
+            "Output only one letter: J or F.\n"
+            "A: Option"
+        )
+        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(action_prompt_1, ["J", "F"])
+
+        pred_prompt_2 = (
             f"{question}{history_2}"
             f"\nYou are currently playing round {round_idx}.\n"
-            f"Q: Which Option do you choose, Option {options[order[0]]} or Option {options[order[1]]}?\n"
+            f"Q: Which Option do you predict the other player will choose, Option {opt1} or Option {opt2}?\n"
             "A: Option"
         )
+        prediction_2 = backend_2.choose(pred_prompt_2, ["J", "F"])
 
-        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, ["J", "F"])
-        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, ["J", "F"])
+        action_prompt_2 = (
+            f"{question}{history_2}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose Option {prediction_2} in round {round_idx}, "
+            f"imagine the outcome for both of your possible actions (Option {opt1} and Option {opt2}), "
+            "compare which gives you a better result, and then choose.\n"
+            f"Which Option do you think is the best to choose for you in this round, Option {opt1} or Option {opt2}?\n"
+            "Output only one letter: J or F.\n"
+            "A: Option"
+        )
+        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(action_prompt_2, ["J", "F"])
 
         points_1, points_2 = pd_points(answer_1, answer_2)
         total_1 += points_1
@@ -690,6 +758,8 @@ def run_pd(
                 round_idx,
                 model_name,
                 model_name,
+                prediction_1,
+                prediction_2,
                 answer_1,
                 answer_2,
                 points_1,
@@ -707,6 +777,8 @@ def run_pd(
             "round",
             "player1",
             "player2",
+            "prediction1",
+            "prediction2",
             "answer1",
             "answer2",
             "points1",
@@ -719,7 +791,7 @@ def run_pd(
     )
 
 
-def run_harmony(
+def run_harmony_scot(
     backend_1,
     backend_2,
     model_name: str,
@@ -739,21 +811,45 @@ def run_harmony(
         forced_1 = forced_first_action("harmony", player_idx=1, mode=first_action_mode) if round_idx == 1 else None
         forced_2 = forced_first_action("harmony", player_idx=2, mode=first_action_mode) if round_idx == 1 else None
 
-        prompt_1 = (
+        pred_prompt_1 = (
             f"{question}{history_1}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which action do you choose, C or D?\n"
+            "Q: Which action do you predict the other player will choose, C or D?\n"
             "A:"
         )
-        prompt_2 = (
+        prediction_1 = backend_1.choose(pred_prompt_1, allowed_actions)
+
+        action_prompt_1 = (
+            f"{question}{history_1}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose {prediction_1} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (C and D), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which action do you think is best for you in this round, C or D?\n"
+            "Output only one action: C or D.\n"
+            "A:"
+        )
+        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(action_prompt_1, allowed_actions)
+
+        pred_prompt_2 = (
             f"{question}{history_2}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which action do you choose, C or D?\n"
+            "Q: Which action do you predict the other player will choose, C or D?\n"
             "A:"
         )
+        prediction_2 = backend_2.choose(pred_prompt_2, allowed_actions)
 
-        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, allowed_actions)
-        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, allowed_actions)
+        action_prompt_2 = (
+            f"{question}{history_2}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose {prediction_2} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (C and D), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which action do you think is best for you in this round, C or D?\n"
+            "Output only one action: C or D.\n"
+            "A:"
+        )
+        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(action_prompt_2, allowed_actions)
 
         points_1, points_2 = harmony_points(answer_1, answer_2)
         total_1 += points_1
@@ -767,6 +863,8 @@ def run_harmony(
                 round_idx,
                 model_name,
                 model_name,
+                prediction_1,
+                prediction_2,
                 answer_1,
                 answer_2,
                 points_1,
@@ -782,6 +880,8 @@ def run_harmony(
             "round",
             "player1",
             "player2",
+            "prediction1",
+            "prediction2",
             "answer1",
             "answer2",
             "points1",
@@ -792,7 +892,7 @@ def run_harmony(
     )
 
 
-def run_deadlock(
+def run_deadlock_scot(
     backend_1,
     backend_2,
     model_name: str,
@@ -812,21 +912,45 @@ def run_deadlock(
         forced_1 = forced_first_action("deadlock", player_idx=1, mode=first_action_mode) if round_idx == 1 else None
         forced_2 = forced_first_action("deadlock", player_idx=2, mode=first_action_mode) if round_idx == 1 else None
 
-        prompt_1 = (
+        pred_prompt_1 = (
             f"{question}{history_1}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which action do you choose, C or D?\n"
+            "Q: Which action do you predict the other player will choose, C or D?\n"
             "A:"
         )
-        prompt_2 = (
+        prediction_1 = backend_1.choose(pred_prompt_1, allowed_actions)
+
+        action_prompt_1 = (
+            f"{question}{history_1}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose {prediction_1} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (C and D), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which action do you think is best for you in this round, C or D?\n"
+            "Output only one action: C or D.\n"
+            "A:"
+        )
+        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(action_prompt_1, allowed_actions)
+
+        pred_prompt_2 = (
             f"{question}{history_2}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which action do you choose, C or D?\n"
+            "Q: Which action do you predict the other player will choose, C or D?\n"
             "A:"
         )
+        prediction_2 = backend_2.choose(pred_prompt_2, allowed_actions)
 
-        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, allowed_actions)
-        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, allowed_actions)
+        action_prompt_2 = (
+            f"{question}{history_2}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose {prediction_2} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (C and D), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which action do you think is best for you in this round, C or D?\n"
+            "Output only one action: C or D.\n"
+            "A:"
+        )
+        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(action_prompt_2, allowed_actions)
 
         points_1, points_2 = deadlock_points(answer_1, answer_2)
         total_1 += points_1
@@ -840,6 +964,8 @@ def run_deadlock(
                 round_idx,
                 model_name,
                 model_name,
+                prediction_1,
+                prediction_2,
                 answer_1,
                 answer_2,
                 points_1,
@@ -855,6 +981,8 @@ def run_deadlock(
             "round",
             "player1",
             "player2",
+            "prediction1",
+            "prediction2",
             "answer1",
             "answer2",
             "points1",
@@ -865,7 +993,7 @@ def run_deadlock(
     )
 
 
-def run_samaritan(
+def run_samaritan_scot(
     backend_1,
     backend_2,
     model_name: str,
@@ -885,21 +1013,45 @@ def run_samaritan(
         forced_1 = forced_first_action("samaritan", player_idx=1, mode=first_action_mode) if round_idx == 1 else None
         forced_2 = forced_first_action("samaritan", player_idx=2, mode=first_action_mode) if round_idx == 1 else None
 
-        prompt_1 = (
+        pred_prompt_1 = (
             f"{question_1}{history_1}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which Option do you choose, Option H or Option N?\n"
+            "Q: Which Option do you predict the other player will choose, Option W or Option S?\n"
             "A: Option"
         )
-        prompt_2 = (
+        prediction_1 = backend_1.choose(pred_prompt_1, ["W", "S"])
+
+        action_prompt_1 = (
+            f"{question_1}{history_1}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose Option {prediction_1} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (Option H and Option N), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which Option do you think is best to choose for you in this round, Option H or Option N?\n"
+            "Output only one action: H or N.\n"
+            "A: Option"
+        )
+        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(action_prompt_1, ["H", "N"])
+
+        pred_prompt_2 = (
             f"{question_2}{history_2}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which Option do you choose, Option W or Option S?\n"
+            "Q: Which Option do you predict the other player will choose, Option H or Option N?\n"
             "A: Option"
         )
+        prediction_2 = backend_2.choose(pred_prompt_2, ["H", "N"])
 
-        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, ["H", "N"])
-        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, ["W", "S"])
+        action_prompt_2 = (
+            f"{question_2}{history_2}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose Option {prediction_2} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (Option W and Option S), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which Option do you think is best to choose for you in this round, Option W or Option S?\n"
+            "Output only one action: W or S.\n"
+            "A: Option"
+        )
+        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(action_prompt_2, ["W", "S"])
 
         points_1, points_2 = samaritan_points(answer_1, answer_2)
         total_1 += points_1
@@ -913,6 +1065,8 @@ def run_samaritan(
                 round_idx,
                 model_name,
                 model_name,
+                prediction_1,
+                prediction_2,
                 answer_1,
                 answer_2,
                 points_1,
@@ -928,6 +1082,8 @@ def run_samaritan(
             "round",
             "player1",
             "player2",
+            "prediction1",
+            "prediction2",
             "answer1",
             "answer2",
             "points1",
@@ -938,7 +1094,7 @@ def run_samaritan(
     )
 
 
-def run_lemons(
+def run_lemons_scot(
     backend_1,
     backend_2,
     model_name: str,
@@ -958,21 +1114,45 @@ def run_lemons(
         forced_1 = forced_first_action("lemons", player_idx=1, mode=first_action_mode) if round_idx == 1 else None
         forced_2 = forced_first_action("lemons", player_idx=2, mode=first_action_mode) if round_idx == 1 else None
 
-        prompt_1 = (
+        pred_prompt_1 = (
             f"{question_1}{history_1}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which Option do you choose, Option HQ or Option LQ?\n"
+            "Q: Which Option do you predict the other player will choose, Option B or Option D?\n"
             "A: Option"
         )
-        prompt_2 = (
+        prediction_1 = backend_1.choose(pred_prompt_1, ["B", "D"])
+
+        action_prompt_1 = (
+            f"{question_1}{history_1}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose Option {prediction_1} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (Option HQ and Option LQ), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which Option do you think is best to choose for you in this round, Option HQ or Option LQ?\n"
+            "Output only one action: HQ or LQ.\n"
+            "A: Option"
+        )
+        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(action_prompt_1, ["HQ", "LQ"])
+
+        pred_prompt_2 = (
             f"{question_2}{history_2}"
             f"\nYou are currently playing round {round_idx}.\n"
-            "Q: Which Option do you choose, Option B or Option D?\n"
+            "Q: Which Option do you predict the other player will choose, Option HQ or Option LQ?\n"
             "A: Option"
         )
+        prediction_2 = backend_2.choose(pred_prompt_2, ["HQ", "LQ"])
 
-        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, ["HQ", "LQ"])
-        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, ["B", "D"])
+        action_prompt_2 = (
+            f"{question_2}{history_2}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose Option {prediction_2} in round {round_idx}, "
+            "imagine the outcome for both of your possible actions (Option B and Option D), "
+            "compare which gives you a better result, and then choose.\n"
+            "Which Option do you think is best to choose for you in this round, Option B or Option D?\n"
+            "Output only one action: B or D.\n"
+            "A: Option"
+        )
+        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(action_prompt_2, ["B", "D"])
 
         points_1, points_2 = lemons_points(answer_1, answer_2)
         total_1 += points_1
@@ -986,6 +1166,8 @@ def run_lemons(
                 round_idx,
                 model_name,
                 model_name,
+                prediction_1,
+                prediction_2,
                 answer_1,
                 answer_2,
                 points_1,
@@ -1001,6 +1183,8 @@ def run_lemons(
             "round",
             "player1",
             "player2",
+            "prediction1",
+            "prediction2",
             "answer1",
             "answer2",
             "points1",
@@ -1011,7 +1195,7 @@ def run_lemons(
     )
 
 
-def run_travelers(
+def run_travelers_scot(
     backend_1,
     backend_2,
     model_name: str,
@@ -1030,26 +1214,50 @@ def run_travelers(
     allowed_actions = [str(claim) for claim in range(low, high + 1)]
 
     for round_idx in range(1, rounds + 1):
-        prompt_1 = (
+        pred_prompt_1 = (
             f"{question}{history_1}"
             f"\nYou are currently playing round {round_idx}.\n"
-            f"Q: Which integer claim do you choose (between {low} and {high})?\n"
+            f"Q: Which integer claim do you predict the other player will choose (between {low} and {high})?\n"
             f"Respond with exactly one integer from {low} to {high}.\n"
             "A:"
         )
-        prompt_2 = (
+        prediction_1 = backend_1.choose(pred_prompt_1, allowed_actions)
+
+        action_prompt_1 = (
+            f"{question}{history_1}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose claim {prediction_1} in round {round_idx}, "
+            f"imagine the outcome for your possible claims between {low} and {high}, "
+            "compare which gives you a better result, and then choose.\n"
+            f"Which integer claim do you think is best for you in this round (between {low} and {high})?\n"
+            f"Output exactly one integer from {low} to {high}.\n"
+            "A:"
+        )
+        answer_1 = backend_1.choose(action_prompt_1, allowed_actions)
+
+        pred_prompt_2 = (
             f"{question}{history_2}"
             f"\nYou are currently playing round {round_idx}.\n"
-            f"Q: Which integer claim do you choose (between {low} and {high})?\n"
+            f"Q: Which integer claim do you predict the other player will choose (between {low} and {high})?\n"
             f"Respond with exactly one integer from {low} to {high}.\n"
             "A:"
         )
+        prediction_2 = backend_2.choose(pred_prompt_2, allowed_actions)
 
-        answer_1 = backend_1.choose(prompt_1, allowed_actions)
-        answer_2 = backend_2.choose(prompt_2, allowed_actions)
+        action_prompt_2 = (
+            f"{question}{history_2}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            f"Q: Given that you think the other player will choose claim {prediction_2} in round {round_idx}, "
+            f"imagine the outcome for your possible claims between {low} and {high}, "
+            "compare which gives you a better result, and then choose.\n"
+            f"Which integer claim do you think is best for you in this round (between {low} and {high})?\n"
+            f"Output exactly one integer from {low} to {high}.\n"
+            "A:"
+        )
+        answer_2 = backend_2.choose(action_prompt_2, allowed_actions)
+
         claim_1 = int(answer_1)
         claim_2 = int(answer_2)
-
         points_1, points_2 = travelers_points(claim_1, claim_2, bonus=bonus)
         total_1 += points_1
         total_2 += points_2
@@ -1062,6 +1270,8 @@ def run_travelers(
                 round_idx,
                 model_name,
                 model_name,
+                int(prediction_1),
+                int(prediction_2),
                 claim_1,
                 claim_2,
                 points_1,
@@ -1077,6 +1287,8 @@ def run_travelers(
             "round",
             "player1",
             "player2",
+            "prediction1",
+            "prediction2",
             "answer1",
             "answer2",
             "points1",
@@ -1088,12 +1300,10 @@ def run_travelers(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Run repeated games with gpt-oss-20b."
-    )
+    parser = argparse.ArgumentParser(description="Run repeated games with SCoT prompting.")
     parser.add_argument(
         "--backend",
-        choices=["hf-local", "openai-compatible"],
+        choices=["hf-local", "openai-compatible", "mock"],
         default="hf-local",
         help="Inference backend to use.",
     )
@@ -1107,27 +1317,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rounds", type=int, default=10, help="Rounds per repeated game.")
     parser.add_argument(
         "--bos-output",
-        default="bos/experiment_bos_gpt_oss_20b.csv",
+        default="scot/experiment_bos_scot_gpt_oss_20b.csv",
         help="Output CSV path for BOS.",
     )
     parser.add_argument(
         "--pd-output",
-        default="pd/experiment_pd_gpt_oss_20b.csv",
+        default="scot/experiment_pd_scot_gpt_oss_20b.csv",
         help="Output CSV path for PD.",
     )
     parser.add_argument(
         "--deadlock-output",
-        default="deadlock/experiment_deadlock_gpt_oss_20b.csv",
+        default="scot/experiment_deadlock_scot_gpt_oss_20b.csv",
         help="Output CSV path for Deadlock.",
     )
     parser.add_argument(
         "--samaritan-output",
-        default="samaritan/experiment_samaritan_gpt_oss_20b.csv",
+        default="scot/experiment_samaritan_scot_gpt_oss_20b.csv",
         help="Output CSV path for Samaritan.",
     )
     parser.add_argument(
         "--lemons-output",
-        default="lemons/experiment_lemons_gpt_oss_20b.csv",
+        default="scot/experiment_lemons_scot_gpt_oss_20b.csv",
         help="Output CSV path for Lemons.",
     )
     parser.add_argument(
@@ -1139,12 +1349,7 @@ def parse_args() -> argparse.Namespace:
             "'defect' uses self-favoring one-shot actions for each game."
         ),
     )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="Random seed (used for PD option order randomization).",
-    )
+    parser.add_argument("--seed", type=int, default=0, help="Random seed.")
 
     parser.add_argument(
         "--base-url",
@@ -1179,13 +1384,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=8,
-        help="Max generated tokens per move.",
+        default=4,
+        help="Max generated tokens per model call.",
+    )
+    parser.add_argument(
+        "--parse-retries",
+        type=int,
+        default=2,
+        help="How many times to re-prompt when model output cannot be parsed.",
     )
     parser.add_argument(
         "--mxfp4-dequantize",
         action="store_true",
-        help="Force MXFP4 dequantization to bf16 during model load (recommended on ROCm if kernels fail).",
+        help="Force MXFP4 dequantization to bf16 during model load.",
     )
     parser.add_argument(
         "--experts-implementation",
@@ -1223,18 +1434,24 @@ def main() -> None:
                 "Missing API key. Set OPENAI_API_KEY (or pass --api-key). "
                 "For local OpenAI-compatible servers, pass --base-url and optionally any dummy key."
             )
-        api_key = args.api_key or "DUMMY_KEY"
 
+        api_key = args.api_key or "DUMMY_KEY"
         client_kwargs = {"api_key": api_key}
         if args.base_url:
             client_kwargs["base_url"] = args.base_url
 
         client = OpenAI(**client_kwargs)
         retry_cfg = RetryConfig(max_retries=args.max_retries)
-        backend_1 = OpenAIBackend(client, args.model, retry_cfg, args.max_new_tokens)
-        backend_2 = OpenAIBackend(client, args.model, retry_cfg, args.max_new_tokens)
+        backend_1 = OpenAIBackend(
+            client=client,
+            model_name=args.model,
+            retry_cfg=retry_cfg,
+            max_new_tokens=args.max_new_tokens,
+            parse_retries=args.parse_retries,
+        )
+        backend_2 = backend_1
 
-    else:
+    elif args.backend == "hf-local":
         backend_1 = HuggingFaceLocalBackend(
             model_name=args.model,
             max_new_tokens=args.max_new_tokens,
@@ -1242,23 +1459,40 @@ def main() -> None:
             torch_dtype=args.torch_dtype,
             mxfp4_dequantize=args.mxfp4_dequantize,
             experts_implementation=args.experts_implementation,
+            parse_retries=args.parse_retries,
         )
         backend_2 = backend_1
 
+    else:
+        backend_1 = MockBackend(seed=args.seed)
+        backend_2 = backend_1
+
     if "bos" in selected_games:
-        bos_df = run_bos(backend_1, backend_2, args.model, args.rounds, first_action_mode=args.first_action_mode)
+        bos_df = run_bos_scot(
+            backend_1,
+            backend_2,
+            args.model,
+            args.rounds,
+            first_action_mode=args.first_action_mode,
+        )
         ensure_parent_dir(args.bos_output)
         bos_df.to_csv(args.bos_output, index=False)
-        print(f"Wrote BOS results to {args.bos_output}")
+        print(f"Wrote BOS SCoT results to {args.bos_output}")
 
     if "pd" in selected_games:
-        pd_df = run_pd(backend_1, backend_2, args.model, args.rounds, first_action_mode=args.first_action_mode)
+        pd_df = run_pd_scot(
+            backend_1,
+            backend_2,
+            args.model,
+            args.rounds,
+            first_action_mode=args.first_action_mode,
+        )
         ensure_parent_dir(args.pd_output)
         pd_df.to_csv(args.pd_output, index=False)
-        print(f"Wrote PD results to {args.pd_output}")
+        print(f"Wrote PD SCoT results to {args.pd_output}")
 
     if "deadlock" in selected_games:
-        deadlock_df = run_deadlock(
+        deadlock_df = run_deadlock_scot(
             backend_1,
             backend_2,
             args.model,
@@ -1267,10 +1501,10 @@ def main() -> None:
         )
         ensure_parent_dir(args.deadlock_output)
         deadlock_df.to_csv(args.deadlock_output, index=False)
-        print(f"Wrote Deadlock results to {args.deadlock_output}")
+        print(f"Wrote Deadlock SCoT results to {args.deadlock_output}")
 
     if "samaritan" in selected_games:
-        samaritan_df = run_samaritan(
+        samaritan_df = run_samaritan_scot(
             backend_1,
             backend_2,
             args.model,
@@ -1279,10 +1513,10 @@ def main() -> None:
         )
         ensure_parent_dir(args.samaritan_output)
         samaritan_df.to_csv(args.samaritan_output, index=False)
-        print(f"Wrote Samaritan results to {args.samaritan_output}")
+        print(f"Wrote Samaritan SCoT results to {args.samaritan_output}")
 
     if "lemons" in selected_games:
-        lemons_df = run_lemons(
+        lemons_df = run_lemons_scot(
             backend_1,
             backend_2,
             args.model,
@@ -1291,7 +1525,7 @@ def main() -> None:
         )
         ensure_parent_dir(args.lemons_output)
         lemons_df.to_csv(args.lemons_output, index=False)
-        print(f"Wrote Lemons results to {args.lemons_output}")
+        print(f"Wrote Lemons SCoT results to {args.lemons_output}")
 
 
 if __name__ == "__main__":
