@@ -1,99 +1,234 @@
-# Playing repeated games with Large Language Models
+# repeatedgames (current fork)
 
-__Authors__: Elif Akata, Lion Schulz, Julian Coda-Forno, Seong Joon Oh, Matthias Bethge, Eric Schulz
+This fork is focused on running repeated-game experiments with `openai/gpt-oss-20b` in three modes:
 
-[![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2305.16867)
+- base (`run_gpt_oss_games.py`)
+- SCoT (`run_scot_games.py`)
+- PS-BR (`run_ps_br_games.py`)
 
-### Abstract
-<div align="justify">
+It also includes multi-run orchestration and aggregation tooling for large SLURM batches.
 
-> LLMs are transforming society and permeating into diverse applications.  As a result, they will frequently interact with us and other agents. It is, therefore, of great societal value to understand how LLMs behave in interactive social settings. We propose to use behavioural game theory to study LLM's cooperation and coordination behaviour. We let different LLMs play finitely repeated games with each other, with human-like strategies, and actual human players. Our results show that LLMs generally perform well in such tasks and also uncover persistent behavioural signatures. In a large set of 2x2 games, we find that LLMs are particularly good at games where valuing their own self-interest pays off, like the iterated Prisoner's Dilemma family. However, they behave sub-optimally in games that require coordination, like the Battle of the Sexes. We, therefore, further focus on two games from these distinct families. In the canonical iterated Prisoner's Dilemma, we find that GPT-4 acts particularly unforgivingly, always defecting after another agent has defected only once. In the Battle of the Sexes, we find that GPT-4 cannot match the behaviour of the simple convention to alternate between options. We verify that these behavioural signatures are stable across robustness checks. We additionally show how GPT-4's behaviour can be modified by providing further information about the other player as well as by asking it to predict the other player's actions before making a choice, a strategy we term social chain-of-thought (SCoT). Finally, we let different versions of GPT-4 play with human players and find that SCoT-prompting leads to better scores and more successful coordination between players. These results enrich our understanding of LLM's social behaviour and pave the way for a behavioural game theory for machines.
-</div>
+## Scope of this fork
 
-![](human_experiment/experiment/figs/gamesetup.jpg "Playing repeated games with LLMs")
+Active code paths in this fork are centered on:
 
-## Contents
+- `run_gpt_oss_games.py`
+- `run_scot_games.py`
+- `run_ps_br_games.py`
+- `run_multirun_suite.py`
+- `run_psbr_bos_multirun.py`
+- `submit_*.sh` and `job.*.sbatch` launch scripts
+- `aggregate_multirun_means.py` and `aggregate_round_window_means.py`
 
-- [all_games](./all_games): code for playing all 144 games and the resulting [data](./all_games/experiments).
-- [bos](./bos): experiments and data for battle of the sexes game.
-- [pd](./pd): experiments and data for the prisoner's dilemma game.
-- [human_experiment](./human_experiment): prolific human experiment, data and analysis code in `R`.
+Legacy upstream assets that are not part of the active workflow were quarantined under:
 
-## System Requirements
+- `quarantine/2026-02-23_reachability_candidates/`
 
-For the largest model `Llama-2-70b-chat`, a minimum of 140GB VRAM (e.g 2xA100 80GB) is necessary. For the API calls, the system requirements will be minimal: 
+## Supported games
 
-- OS: Windows, macOS, or Linux
-- CPU: Any modern processor (Intel i3 or higher, AMD Ryzen series)
-- RAM: 4 GB or more (8 GB recommended)
-- Python Version: Python 3.7 or higher
+All three main runners support:
 
-## Setup
+- `bos` (Battle of the Sexes)
+- `pd` (Prisoner's Dilemma)
+- `deadlock`
+- `samaritan`
+- `lemons`
+- `both` (alias for `bos` + `pd`)
+- `all` (all five games)
+
+## Environment setup (local)
 
 ```bash
-git clone https://github.com/eliaka/repeatedgames
-cd repeatedgames
+cd /work1/krishnamurthy/arvind/repeatedgames
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip setuptools wheel
 pip install -r requirements.txt
 ```
 
-## GPT-OSS 20B runners
+Notes:
 
-### Standard repeated-game runner
+- `requirements.txt` is a baseline. On ROCm/HPC, the SLURM scripts install ROCm-specific torch explicitly.
+- For `hf-local`, install a torch build compatible with your accelerator.
 
-```bash
-python run_gpt_oss_games.py --backend hf-local --game both --model openai/gpt-oss-20b
-```
+## Quick start (local)
 
-AMD SLURM submit helper:
-
-```bash
-./submit_repeatedgames_gpt_oss20b.sh
-```
-
-### PS-BR runner (separate)
-
-`run_ps_br_games.py` implements a PS-BR style planner:
-- it samples opponent continuation actions by autoregressive imputation,
-- estimates continuation value for candidate actions `J`/`F`,
-- picks the higher-value action.
+### 1) Base mode
 
 ```bash
-python run_ps_br_games.py --backend hf-local --game both --model openai/gpt-oss-20b
+python run_gpt_oss_games.py \
+  --backend hf-local \
+  --game both \
+  --model openai/gpt-oss-20b \
+  --rounds 10
 ```
 
-AMD SLURM submit helper:
+Default outputs:
+
+- `bos/experiment_bos_gpt_oss_20b.csv`
+- `pd/experiment_pd_gpt_oss_20b.csv`
+
+### 2) SCoT mode
 
 ```bash
-./submit_psbr_gpt_oss20b.sh
+python run_scot_games.py \
+  --backend hf-local \
+  --game both \
+  --model openai/gpt-oss-20b \
+  --rounds 10
 ```
 
-### SCoT runner (separate)
+Default outputs:
 
-`run_scot_games.py` implements social chain-of-thought prompting:
-- first predict the opponent's next action,
-- then choose your own action conditioned on that prediction.
+- `scot/experiment_bos_scot_gpt_oss_20b.csv`
+- `scot/experiment_pd_scot_gpt_oss_20b.csv`
+
+### 3) PS-BR mode
 
 ```bash
-python run_scot_games.py --backend hf-local --game both --model openai/gpt-oss-20b
+python run_ps_br_games.py \
+  --backend hf-local \
+  --game both \
+  --model openai/gpt-oss-20b \
+  --rounds 50 \
+  --ps-samples 4 \
+  --planning-horizon 10 \
+  --discount 1.0 \
+  --sample-temperature 0.3
 ```
 
-AMD SLURM submit helper:
+Default outputs:
+
+- `ps_br/experiment_bos_psbr_gpt_oss_20b.csv`
+- `ps_br/experiment_pd_psbr_gpt_oss_20b.csv`
+
+PS-BR-specific controls include:
+
+- `--strategy-inference {llm-label,likelihood}`
+- `--strategy-memory-rounds <int>`
+- `--collusive-mode`
+- `--first-action-mode {model,defect}`
+
+### Backend options
+
+- Base: `--backend {hf-local,openai-compatible}`
+- SCoT: `--backend {hf-local,openai-compatible,mock}`
+- PS-BR: `--backend {hf-local,openai-compatible,mock}`
+
+For `openai-compatible`, provide `--base-url` and `--api-key` (or set env vars like `OPENAI_BASE_URL`, `OPENAI_API_KEY`).
+
+## CSV schema (high level)
+
+- Base outputs include per-round actions and cumulative totals.
+- SCoT outputs add `prediction1` and `prediction2` columns.
+- PS-BR outputs add planner diagnostics, including selected strategies and estimated values.
+
+## SLURM workflow (AMD/ROCm cluster)
+
+Helper submit scripts:
+
+- `./submit_repeatedgames_gpt_oss20b.sh`
+- `./submit_scot_gpt_oss20b.sh`
+- `./submit_psbr_gpt_oss20b.sh`
+- `./submit_parallel_gpt_oss20b.sh` (base + scot + psbr)
+
+Runtime logs are redirected under `$WORK` (default `/work1/krishnamurthy/arvind`), e.g.:
+
+- base: `$WORK/repeatedgames_runs/<jobid>/slurm_<jobid>.out`
+- scot: `$WORK/repeatedgames_runs_scot/<jobid>/slurm_<jobid>.out`
+- psbr: `$WORK/repeatedgames_runs_psbr/<jobid>/slurm_<jobid>.out`
+
+Useful PS-BR submit env knobs:
 
 ```bash
-./submit_scot_gpt_oss20b.sh
+COLLUSIVE_MODE=1 STRATEGY_MEMORY_ROUNDS=10 ./submit_psbr_gpt_oss20b.sh
 ```
 
-### Run both in parallel
+## Multi-run experiments
 
-Submit both jobs back-to-back:
+### Main multirun suite (all 5 games)
+
+Driver script:
+
+- `run_multirun_suite.py`
+
+SLURM job wrapper:
+
+- `job.multirun_suite_gpt_oss20b.sbatch`
+
+Chunked launcher (submits base/scot/psbr batches and creates a manifest):
 
 ```bash
-./submit_repeatedgames_gpt_oss20b.sh
-./submit_psbr_gpt_oss20b.sh
+RUNS_TOTAL=100 RUNS_PER_JOB=25 ROUNDS=100 FIRST_ACTION_MODE=defect ./submit_multirun_15_defect.sh
 ```
 
-### Run base + SCoT + PS-BR in parallel
+Compatibility alias:
 
 ```bash
-./submit_parallel_gpt_oss20b.sh
+./submit_multirun_12_defect.sh
 ```
+
+Per job, the suite writes:
+
+- `round_logs_<mode>_r<rounds>_n<runs>.csv`
+- `run_totals_<mode>_r<rounds>_n<runs>.csv`
+- `summary_means_<mode>_r<rounds>_n<runs>.csv`
+- `config_<mode>_r<rounds>_n<runs>.json`
+- `progress_<mode>_r<rounds>_n<runs>.json`
+
+And copies summary/totals CSVs to:
+
+- `multirun_summaries/`
+
+### BoS-only PS-BR multirun
+
+- runner: `run_psbr_bos_multirun.py`
+- sbatch: `job.psbr_bos_multirun_temp.sbatch`
+
+## Aggregation utilities
+
+### Aggregate run totals across many jobs
+
+```bash
+python aggregate_multirun_means.py \
+  --inputs-from-file /path/to/manifest.txt \
+  --output /path/to/combined_mean_totals.csv
+```
+
+Alternative input modes:
+
+- `--inputs <file1> <file2> ...`
+- `--inputs-glob '/path/**/run_totals_*.csv'`
+
+### Aggregate windowed per-round rewards
+
+```bash
+python aggregate_round_window_means.py \
+  --inputs-from-file /path/to/manifest.txt \
+  --round-start 130 \
+  --round-end 180 \
+  --expected-runs 100 \
+  --output /path/to/window_mean_rewards.csv
+```
+
+This utility maps each `run_totals_*.csv` to its sibling `round_logs_*.csv` and computes windowed reward summaries.
+
+## Current repository layout
+
+- `run_gpt_oss_games.py`: base repeated-game runner
+- `run_scot_games.py`: SCoT runner
+- `run_ps_br_games.py`: PS-BR runner
+- `run_multirun_suite.py`: multi-run suite over all games
+- `run_psbr_bos_multirun.py`: PS-BR BoS-only multirun
+- `job.*.sbatch`: SLURM job definitions
+- `submit_*.sh`: SLURM submit wrappers
+- `aggregate_*.py`: postprocessing utilities
+- `bos/`, `pd/`, `scot/`, `ps_br/`: output/data folders used by active workflows
+- `multirun_summaries/`: copied summary and run-total outputs
+- `quarantine/2026-02-23_reachability_candidates/`: archived non-active legacy content
+
+## Repro tips
+
+- Pin `--seed` for single runs and `--seed-start` for multi-run jobs.
+- Keep `--first-action-mode` explicit in logs and job tags.
+- For long multirun jobs, keep `--resume` enabled (already set in `job.multirun_suite_gpt_oss20b.sbatch`).

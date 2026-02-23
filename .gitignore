@@ -20,3 +20,6 @@ env/
 /*.out
 /*.err
 /*.log
+
+# Local archive/quarantine workspace
+/quarantine/
