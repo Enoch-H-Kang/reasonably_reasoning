@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run multi-run repeated-games experiments and aggregate total-score means.
 
-This script is designed for the 3x5 setup:
+This script is designed for the 3x7 setup:
 - modes: base, scot, psbr
-- games: bos, pd, deadlock, samaritan, lemons
+- games: bos, pd, deadlock, promo, collusion, samaritan, lemons
 
 For each (mode, game), it runs N independent runs, logs per-round/per-run data,
 and writes mean total score statistics where total score = total1 + total2.
@@ -21,7 +21,7 @@ from typing import Dict, List, Set, Tuple
 import pandas as pd
 
 
-GAMES: Tuple[str, ...] = ("bos", "pd", "deadlock", "samaritan", "lemons")
+ALL_GAMES: Tuple[str, ...] = ("bos", "pd", "deadlock", "promo", "collusion", "samaritan", "lemons")
 MODES: Tuple[str, ...] = ("base", "scot", "psbr")
 
 
@@ -58,8 +58,8 @@ def canonicalize_round_logs(frame: pd.DataFrame) -> pd.DataFrame:
     return dedup.sort_values(["mode", "run", "game", "round"]).reset_index(drop=True)
 
 
-def task_seed(seed_start: int, run_idx: int, game_idx: int) -> int:
-    return seed_start + (run_idx - 1) * len(GAMES) + game_idx
+def task_seed(seed_start: int, run_idx: int, game_idx: int, games_count: int) -> int:
+    return seed_start + (run_idx - 1) * games_count + game_idx
 
 
 def load_completed_tasks(run_totals_path: str, resume: bool) -> Tuple[pd.DataFrame, Set[Tuple[int, str]]]:
@@ -89,6 +89,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--runs", type=int, default=100, help="Number of runs per game.")
     parser.add_argument("--rounds", type=int, default=100, help="Rounds per run.")
     parser.add_argument("--seed-start", type=int, default=0, help="Base seed used to derive per-(run,game) seeds.")
+    parser.add_argument(
+        "--games",
+        default=",".join(ALL_GAMES),
+        help=(
+            "Comma-separated game subset to run. "
+            f"Allowed: {', '.join(ALL_GAMES)}. Default runs all."
+        ),
+    )
     parser.add_argument(
         "--first-action-mode",
         choices=["model", "defect"],
@@ -158,6 +166,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def parse_games(games_csv: str) -> List[str]:
+    requested = [name.strip().lower() for name in games_csv.split(",") if name.strip()]
+    if not requested:
+        raise SystemExit("--games must include at least one game.")
+
+    invalid = [name for name in requested if name not in ALL_GAMES]
+    if invalid:
+        raise SystemExit(
+            f"Unsupported game(s) in --games: {', '.join(sorted(set(invalid)))}. "
+            f"Allowed: {', '.join(ALL_GAMES)}"
+        )
+
+    # Preserve user order while removing duplicates.
+    ordered_unique: List[str] = []
+    seen = set()
+    for name in requested:
+        if name not in seen:
+            ordered_unique.append(name)
+            seen.add(name)
+    return ordered_unique
+
+
 def build_runner(mode: str, args: argparse.Namespace):
     if mode == "base":
         import run_gpt_oss_games as mod
@@ -191,6 +221,22 @@ def build_runner(mode: str, args: argparse.Namespace):
                 )
             if game == "deadlock":
                 return mod.run_deadlock(
+                    backend_1,
+                    backend_2,
+                    args.model,
+                    args.rounds,
+                    first_action_mode=args.first_action_mode,
+                )
+            if game == "promo":
+                return mod.run_promo(
+                    backend_1,
+                    backend_2,
+                    args.model,
+                    args.rounds,
+                    first_action_mode=args.first_action_mode,
+                )
+            if game == "collusion":
+                return mod.run_collusion(
                     backend_1,
                     backend_2,
                     args.model,
@@ -250,6 +296,22 @@ def build_runner(mode: str, args: argparse.Namespace):
                 )
             if game == "deadlock":
                 return mod.run_deadlock_scot(
+                    backend_1,
+                    backend_2,
+                    args.model,
+                    args.rounds,
+                    first_action_mode=args.first_action_mode,
+                )
+            if game == "promo":
+                return mod.run_promo_scot(
+                    backend_1,
+                    backend_2,
+                    args.model,
+                    args.rounds,
+                    first_action_mode=args.first_action_mode,
+                )
+            if game == "collusion":
+                return mod.run_collusion_scot(
                     backend_1,
                     backend_2,
                     args.model,
@@ -339,6 +401,24 @@ def build_runner(mode: str, args: argparse.Namespace):
                     planner_cfg,
                     first_action_mode=args.first_action_mode,
                 )
+            elif game == "promo":
+                frame = mod.run_promo_psbr(
+                    backend_1,
+                    backend_2,
+                    args.model,
+                    args.rounds,
+                    planner_cfg,
+                    first_action_mode=args.first_action_mode,
+                )
+            elif game == "collusion":
+                frame = mod.run_collusion_psbr(
+                    backend_1,
+                    backend_2,
+                    args.model,
+                    args.rounds,
+                    planner_cfg,
+                    first_action_mode=args.first_action_mode,
+                )
             elif game == "samaritan":
                 frame = mod.run_samaritan_psbr(
                     backend_1,
@@ -378,6 +458,7 @@ def build_runner(mode: str, args: argparse.Namespace):
 def run_suite(args: argparse.Namespace) -> Dict[str, str]:
     ensure_dir(args.output_dir)
     run_one = build_runner(args.mode, args)
+    selected_games = parse_games(args.games)
 
     prefix = f"{args.mode}_r{args.rounds}_n{args.runs}"
     detail_path = os.path.join(args.output_dir, f"round_logs_{prefix}.csv")
@@ -390,12 +471,12 @@ def run_suite(args: argparse.Namespace) -> Dict[str, str]:
     if completed_tasks:
         print(f"Resuming from {len(completed_tasks)} completed task(s) in {run_totals_path}")
 
-    total_tasks = args.runs * len(GAMES)
+    total_tasks = args.runs * len(selected_games)
     task_idx = len(completed_tasks)
     start_wall = time.time()
     for run_idx in range(1, args.runs + 1):
-        for game_idx, game in enumerate(GAMES):
-            run_seed = task_seed(args.seed_start, run_idx, game_idx)
+        for game_idx, game in enumerate(selected_games):
+            run_seed = task_seed(args.seed_start, run_idx, game_idx, len(selected_games))
             task_id = (run_idx, game)
             if task_id in completed_tasks:
                 continue
@@ -490,7 +571,7 @@ def run_suite(args: argparse.Namespace) -> Dict[str, str]:
     summary_df.to_csv(summary_path, index=False)
 
     config_payload = vars(args).copy()
-    config_payload["games"] = list(GAMES)
+    config_payload["games"] = list(selected_games)
     config_payload["wall_time_sec"] = time.time() - start_wall
     config_payload["completed_tasks"] = int(run_totals_df.shape[0])
     config_payload["total_tasks"] = int(total_tasks)

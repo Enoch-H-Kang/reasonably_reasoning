@@ -23,3 +23,6 @@ env/
 
 # Local archive/quarantine workspace
 /quarantine/
+
+# Multirun summaries
+/multirun_summaries/

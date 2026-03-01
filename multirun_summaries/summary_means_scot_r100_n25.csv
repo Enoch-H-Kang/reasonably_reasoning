@@ -1,5 +1,0 @@
-mode,game,runs,mean_total_score,std_total_score,min_total_score,max_total_score,mean_total1,mean_total2,mean_elapsed_sec
-scot,bos,25,1700.0,0.0,1700.0,1700.0,700.0,1000.0,377.0119942474365
-scot,deadlock,25,400.0,0.0,400.0,400.0,200.0,200.0,375.74486577033997
-scot,harmony,25,594.0,0.0,594.0,594.0,297.0,297.0,375.3445875072479
-scot,pd,25,1000.0,0.0,1000.0,1000.0,500.0,500.0,377.00418078422547

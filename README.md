@@ -13,10 +13,12 @@ Supported games:
 - `bos`
 - `pd`
 - `deadlock`
+- `promo`
+- `collusion`
 - `samaritan`
 - `lemons`
 - `both` (`bos` + `pd`)
-- `all` (all five games)
+- `all` (all seven games)
 
 ## Install
 

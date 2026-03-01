@@ -9,7 +9,7 @@ RUNS_TOTAL="${RUNS_TOTAL:-100}"
 RUNS_PER_JOB="${RUNS_PER_JOB:-25}"
 ROUNDS="${ROUNDS:-100}"
 FIRST_ACTION_MODE="${FIRST_ACTION_MODE:-defect}"
-GAMES_PER_MODE="${GAMES_PER_MODE:-5}"
+GAMES_PER_MODE="${GAMES_PER_MODE:-7}"
 REQUIRE_IDLE_NODES="${REQUIRE_IDLE_NODES:-0}"
 COLLUSIVE_MODE="${COLLUSIVE_MODE:-0}"
 
@@ -95,7 +95,7 @@ for jid in "${base_jids[@]}" "${scot_jids[@]}" "${psbr_jids[@]}"; do
 done
 
 echo
-echo "After completion, aggregate 15-row means with:"
+echo "After completion, aggregate per-(mode,game) means with:"
 echo "  python aggregate_multirun_means.py \\"
 echo "    --inputs-from-file $manifest \\"
-echo "    --output $WORK_ROOT/repeatedgames_runs_multirun/combined_15_mean_totals_$(date +%Y%m%d_%H%M%S).csv"
+echo "    --output $WORK_ROOT/repeatedgames_runs_multirun/combined_mean_totals_$(date +%Y%m%d_%H%M%S).csv"

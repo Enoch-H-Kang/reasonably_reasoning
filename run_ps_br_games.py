@@ -107,6 +107,39 @@ DEADLOCK_RULES = (
     "If you choose D and the other player chooses D, then you win 1 point and the other player wins 1 point.\n\n"
 )
 
+PROMO_RULES = (
+    "You are playing a game repeatedly with another player. In this game, you can choose "
+    "between Action R (Regular), Action P (Promotion), and Action Z (Price war). "
+    "You will play {rounds} rounds in total with the same player. "
+    "The rules of the game are as follows:\n"
+    "If you choose R and the other player chooses R, then you win 3 points and the other player wins 3 points.\n"
+    "If you choose R and the other player chooses P, then you win 1 points and the other player wins 6 points.\n"
+    "If you choose R and the other player chooses Z, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose P and the other player chooses R, then you win 6 points and the other player wins 1 points.\n"
+    "If you choose P and the other player chooses P, then you win 2 points and the other player wins 2 points.\n"
+    "If you choose P and the other player chooses Z, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose Z and the other player chooses R, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose Z and the other player chooses P, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose Z and the other player chooses Z, then you win 0 points and the other player wins 0 points.\n\n"
+)
+
+COLLUSION_RULES = (
+    "You are playing a collusion game repeatedly with another player. "
+    "In this game, you can choose between Action K (Cartel / collude), "
+    "Action N (Normal competition), and Action P (Punishment / price war). "
+    "You will play {rounds} rounds in total with the same player. "
+    "The rules of the game are as follows:\n"
+    "If you choose K and the other player chooses K, then you win 10 points and the other player wins 10 points.\n"
+    "If you choose K and the other player chooses N, then you win 2 points and the other player wins 14 points.\n"
+    "If you choose K and the other player chooses P, then you win -2 points and the other player wins 3 points.\n"
+    "If you choose N and the other player chooses K, then you win 14 points and the other player wins 2 points.\n"
+    "If you choose N and the other player chooses N, then you win 4 points and the other player wins 4 points.\n"
+    "If you choose N and the other player chooses P, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose P and the other player chooses K, then you win 3 points and the other player wins -2 points.\n"
+    "If you choose P and the other player chooses N, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose P and the other player chooses P, then you win 1 points and the other player wins 1 points.\n\n"
+)
+
 SAMARITAN_HELPER_RULES = (
     "You are playing Samaritan's dilemma repeatedly with another player. "
     "You are the Helper and can choose between Option H (Help) and Option N (No-help). "
@@ -200,6 +233,28 @@ HARMONY_DEADLOCK_STRATEGY_MENU = [
     "grim_trigger",
     "wsls_pavlov",
     "random_pc",
+]
+
+PROMO_STRATEGY_MENU = [
+    "allR",
+    "allP",
+    "allZ",
+    "soft_allR",
+    "soft_allP",
+    "mad0",
+    "mad1",
+    "grim_trigger",
+]
+
+COLLUSION_STRATEGY_MENU = [
+    "allN",
+    "allK",
+    "soft_K",
+    "soft_N",
+    "allP",
+    "grimP",
+    "nashRev",
+    "abreuMAD",
 ]
 
 SAMARITAN_HELPER_STRATEGY_MENU = [
@@ -299,6 +354,26 @@ STRATEGY_DESCRIPTIONS = {
         "grim_trigger": "Infer this label if Player A starts with C and, after first seeing Player B play D, switches to D permanently.",
         "wsls_pavlov": "Infer this label if Player A tends to repeat its last action after matched rounds and switch after mismatches, typically starting from C.",
         "random_pc": "Infer this label if Player A appears near-uniform random between C and D with weak history dependence.",
+    },
+    "promo": {
+        "allR": "Infer this label if Player A chooses R almost every round regardless of history.",
+        "allP": "Infer this label if Player A chooses P almost every round regardless of history.",
+        "allZ": "Infer this label if Player A chooses Z almost every round regardless of history.",
+        "soft_allR": "Infer this label if Player A is mostly R with occasional P noise (roughly 90/10).",
+        "soft_allP": "Infer this label if Player A is mostly P with occasional R noise (roughly 90/10).",
+        "mad0": "Infer this label if Player A follows odd-round P / even-round R alternation, but switches to Z punishment for about 2 rounds after an observed deviation from the prescribed path.",
+        "mad1": "Infer this label if Player A follows odd-round R / even-round P alternation, but switches to Z punishment for about 2 rounds after an observed deviation from the prescribed path.",
+        "grim_trigger": "Infer this label if Player A follows odd-round P / even-round R alternation until the first observed deviation, then switches to Z permanently.",
+    },
+    "collusion": {
+        "allN": "Infer this label if Player A chooses N almost every round regardless of history.",
+        "allK": "Infer this label if Player A chooses K almost every round regardless of history.",
+        "soft_K": "Infer this label if Player A is mostly K with occasional N noise (roughly 90/10).",
+        "soft_N": "Infer this label if Player A is mostly N with occasional K noise (roughly 90/10).",
+        "allP": "Infer this label if Player A chooses P almost every round regardless of history.",
+        "grimP": "Infer this label if Player A stays at K until first observed deviation from (K,K), then switches to P permanently.",
+        "nashRev": "Infer this label if Player A stays at K until first observed deviation from (K,K), then switches to N permanently.",
+        "abreuMAD": "Infer this label if Player A plays K on cooperative path, switches to P for about 2 rounds after observed deviation from (K,K), then returns to K.",
     },
     "samaritan": {
         "always_help": "Infer this label if Player A (Helper) chooses H almost every round regardless of history.",
@@ -845,6 +920,42 @@ def deadlock_points(choice_1: str, choice_2: str) -> Tuple[int, int]:
     raise ValueError(f"Unexpected Deadlock actions: {choice_1}, {choice_2}")
 
 
+def promo_points(choice_1: str, choice_2: str) -> Tuple[int, int]:
+    if choice_1 == "Z" or choice_2 == "Z":
+        return 0, 0
+    if choice_1 == "R" and choice_2 == "R":
+        return 3, 3
+    if choice_1 == "R" and choice_2 == "P":
+        return 1, 6
+    if choice_1 == "P" and choice_2 == "R":
+        return 6, 1
+    if choice_1 == "P" and choice_2 == "P":
+        return 2, 2
+    raise ValueError(f"Unexpected Promo actions: {choice_1}, {choice_2}")
+
+
+def collusion_points(choice_1: str, choice_2: str) -> Tuple[int, int]:
+    if choice_1 == "K" and choice_2 == "K":
+        return 10, 10
+    if choice_1 == "K" and choice_2 == "N":
+        return 2, 14
+    if choice_1 == "K" and choice_2 == "P":
+        return -2, 3
+    if choice_1 == "N" and choice_2 == "K":
+        return 14, 2
+    if choice_1 == "N" and choice_2 == "N":
+        return 4, 4
+    if choice_1 == "N" and choice_2 == "P":
+        return 0, 0
+    if choice_1 == "P" and choice_2 == "K":
+        return 3, -2
+    if choice_1 == "P" and choice_2 == "N":
+        return 0, 0
+    if choice_1 == "P" and choice_2 == "P":
+        return 1, 1
+    raise ValueError(f"Unexpected Collusion actions: {choice_1}, {choice_2}")
+
+
 def samaritan_points(choice_1: str, choice_2: str) -> Tuple[int, int]:
     if choice_1 == "H" and choice_2 == "W":
         return 2, -1
@@ -887,6 +998,8 @@ def game_display_name(game: str) -> str:
         "pd": "Prisoner's Dilemma",
         "harmony": "Harmony",
         "deadlock": "Deadlock",
+        "promo": "Promo",
+        "collusion": "Collusion",
         "samaritan": "Samaritan's Dilemma",
         "lemons": "Lemons",
         "travelers": "Traveler's Dilemma",
@@ -934,6 +1047,10 @@ def forced_first_action(game: str, player_idx: int, mode: str) -> Optional[str]:
         return "D"
     if game == "deadlock":
         return "C"
+    if game == "promo":
+        return "P"
+    if game == "collusion":
+        return "N"
     if game == "samaritan":
         if player_idx == 1:
             return "H"
@@ -958,6 +1075,10 @@ def stage_points(game: str, choice_1: str, choice_2: str) -> Tuple[int, int]:
         return harmony_points(choice_1, choice_2)
     if game == "deadlock":
         return deadlock_points(choice_1, choice_2)
+    if game == "promo":
+        return promo_points(choice_1, choice_2)
+    if game == "collusion":
+        return collusion_points(choice_1, choice_2)
     if game == "samaritan":
         return samaritan_points(choice_1, choice_2)
     if game == "lemons":
@@ -1031,6 +1152,10 @@ def strategy_menu(game: str, player_idx: Optional[int] = None) -> List[str]:
         return PD_STRATEGY_MENU
     if game in ("harmony", "deadlock"):
         return HARMONY_DEADLOCK_STRATEGY_MENU
+    if game == "promo":
+        return PROMO_STRATEGY_MENU
+    if game == "collusion":
+        return COLLUSION_STRATEGY_MENU
     if game == "samaritan":
         if player_idx == 1:
             return SAMARITAN_HELPER_STRATEGY_MENU
@@ -1101,6 +1226,16 @@ def collusive_prior_label(game: str, opponent_idx: int) -> Optional[str]:
         return "alternate_phase0"
     if game == "pd":
         return "soft_grim_trigger"
+    if game == "promo":
+        if opponent_idx == 1:
+            return "mad0"
+        if opponent_idx == 2:
+            return "mad1"
+        raise ValueError(f"Invalid player index: {opponent_idx}")
+    if game == "collusion":
+        if opponent_idx in (1, 2):
+            return "abreuMAD"
+        raise ValueError(f"Invalid player index: {opponent_idx}")
     if game == "samaritan":
         if opponent_idx == 1:
             return "grim_forgive"
@@ -1257,6 +1392,195 @@ def build_strategy_inference_prompt(
         "Respond with exactly one label only.\n\n"
         "**Output only the label.**\n"
     )
+
+
+PROMO_ACTION_ORDER = ("R", "P", "Z")
+COLLUSION_ACTION_ORDER = ("K", "N", "P")
+
+
+def promo_phase_action(phase: int, round_idx: int) -> str:
+    if phase not in (0, 1):
+        raise ValueError(f"Invalid promo phase: {phase}")
+    if round_idx <= 0:
+        raise ValueError(f"round_idx must be >= 1, got {round_idx}")
+    is_odd_round = round_idx % 2 == 1
+    if phase == 0:
+        return "P" if is_odd_round else "R"
+    return "R" if is_odd_round else "P"
+
+
+def promo_phase_expected_pair(phase: int, round_idx: int) -> Tuple[str, str]:
+    self_action = promo_phase_action(phase, round_idx)
+    opp_action = "R" if self_action == "P" else "P"
+    return self_action, opp_action
+
+
+def promo_mad_punishment_timer(
+    phase: int,
+    self_history_actions: List[str],
+    opp_history_actions: List[str],
+) -> int:
+    if len(self_history_actions) != len(opp_history_actions):
+        raise ValueError("self_history_actions and opp_history_actions must have equal length")
+
+    punish_remaining = 0
+    for past_round, (self_action, opp_action) in enumerate(
+        zip(self_history_actions, opp_history_actions), start=1
+    ):
+        if punish_remaining > 0:
+            expected_self, expected_opp = "Z", "Z"
+        else:
+            expected_self, expected_opp = promo_phase_expected_pair(phase, past_round)
+        deviated = (self_action != expected_self) or (opp_action != expected_opp)
+        if deviated:
+            punish_remaining = 2
+        elif punish_remaining > 0:
+            punish_remaining -= 1
+    return punish_remaining
+
+
+def promo_grim_triggered(
+    phase: int,
+    self_history_actions: List[str],
+    opp_history_actions: List[str],
+) -> bool:
+    if len(self_history_actions) != len(opp_history_actions):
+        raise ValueError("self_history_actions and opp_history_actions must have equal length")
+
+    triggered = False
+    for past_round, (self_action, opp_action) in enumerate(
+        zip(self_history_actions, opp_history_actions), start=1
+    ):
+        if triggered:
+            expected_self, expected_opp = "Z", "Z"
+        else:
+            expected_self, expected_opp = promo_phase_expected_pair(phase, past_round)
+        deviated = (self_action != expected_self) or (opp_action != expected_opp)
+        if deviated:
+            triggered = True
+    return triggered
+
+
+def promo_action_probabilities(
+    strategy: str,
+    self_history_actions: List[str],
+    opp_history_actions: List[str],
+    round_idx: int,
+) -> dict[str, float]:
+    if strategy == "allR":
+        return {"R": 1.0}
+    if strategy == "allP":
+        return {"P": 1.0}
+    if strategy == "allZ":
+        return {"Z": 1.0}
+    if strategy == "soft_allR":
+        return {"R": 0.9, "P": 0.1}
+    if strategy == "soft_allP":
+        return {"P": 0.9, "R": 0.1}
+    if strategy == "mad0":
+        punish_remaining = promo_mad_punishment_timer(0, self_history_actions, opp_history_actions)
+        if punish_remaining > 0:
+            return {"Z": 1.0}
+        return {promo_phase_action(0, round_idx): 1.0}
+    if strategy == "mad1":
+        punish_remaining = promo_mad_punishment_timer(1, self_history_actions, opp_history_actions)
+        if punish_remaining > 0:
+            return {"Z": 1.0}
+        return {promo_phase_action(1, round_idx): 1.0}
+    if strategy == "grim_trigger":
+        if promo_grim_triggered(0, self_history_actions, opp_history_actions):
+            return {"Z": 1.0}
+        return {promo_phase_action(0, round_idx): 1.0}
+    raise ValueError(f"Unknown Promo strategy: {strategy}")
+
+
+def promo_strategy_mode_action(
+    strategy: str,
+    self_history_actions: List[str],
+    opp_history_actions: List[str],
+    round_idx: int,
+) -> str:
+    probs = promo_action_probabilities(strategy, self_history_actions, opp_history_actions, round_idx)
+    best_prob = max(probs.values())
+    for action in PROMO_ACTION_ORDER:
+        if abs(probs.get(action, 0.0) - best_prob) < 1e-12:
+            return action
+    raise RuntimeError(f"Could not resolve mode action for Promo strategy: {strategy}")
+
+
+def collusion_deviation_triggered(
+    self_history_actions: List[str],
+    opp_history_actions: List[str],
+) -> bool:
+    if len(self_history_actions) != len(opp_history_actions):
+        raise ValueError("self_history_actions and opp_history_actions must have equal length")
+
+    for self_action, opp_action in zip(self_history_actions, opp_history_actions):
+        if self_action != "K" or opp_action != "K":
+            return True
+    return False
+
+
+def collusion_abreu_punishment_timer(
+    self_history_actions: List[str],
+    opp_history_actions: List[str],
+) -> int:
+    if len(self_history_actions) != len(opp_history_actions):
+        raise ValueError("self_history_actions and opp_history_actions must have equal length")
+
+    punish_remaining = 0
+    for self_action, opp_action in zip(self_history_actions, opp_history_actions):
+        if punish_remaining > 0:
+            punish_remaining -= 1
+            continue
+        if self_action != "K" or opp_action != "K":
+            punish_remaining = 2
+    return punish_remaining
+
+
+def collusion_action_probabilities(
+    strategy: str,
+    self_history_actions: List[str],
+    opp_history_actions: List[str],
+    round_idx: int,
+) -> dict[str, float]:
+    if strategy == "allN":
+        return {"N": 1.0}
+    if strategy == "allK":
+        return {"K": 1.0}
+    if strategy == "soft_K":
+        return {"K": 0.9, "N": 0.1}
+    if strategy == "soft_N":
+        return {"N": 0.9, "K": 0.1}
+    if strategy == "allP":
+        return {"P": 1.0}
+    if strategy == "grimP":
+        if collusion_deviation_triggered(self_history_actions, opp_history_actions):
+            return {"P": 1.0}
+        return {"K": 1.0}
+    if strategy == "nashRev":
+        if collusion_deviation_triggered(self_history_actions, opp_history_actions):
+            return {"N": 1.0}
+        return {"K": 1.0}
+    if strategy == "abreuMAD":
+        if collusion_abreu_punishment_timer(self_history_actions, opp_history_actions) > 0:
+            return {"P": 1.0}
+        return {"K": 1.0}
+    raise ValueError(f"Unknown Collusion strategy: {strategy}")
+
+
+def collusion_strategy_mode_action(
+    strategy: str,
+    self_history_actions: List[str],
+    opp_history_actions: List[str],
+    round_idx: int,
+) -> str:
+    probs = collusion_action_probabilities(strategy, self_history_actions, opp_history_actions, round_idx)
+    best_prob = max(probs.values())
+    for action in COLLUSION_ACTION_ORDER:
+        if abs(probs.get(action, 0.0) - best_prob) < 1e-12:
+            return action
+    raise RuntimeError(f"Could not resolve mode action for Collusion strategy: {strategy}")
 
 
 def strategy_prob_j(
@@ -1483,6 +1807,25 @@ def sample_from_weights(options: List[str], weights: List[float]) -> str:
     return options[-1]
 
 
+def sample_action_from_distribution(
+    action_probs: dict[str, float],
+    action_order: Tuple[str, ...] = PROMO_ACTION_ORDER,
+    fallback_action: str = "Z",
+) -> str:
+    actions: List[str] = []
+    weights: List[float] = []
+    for action in action_order:
+        prob = max(0.0, float(action_probs.get(action, 0.0)))
+        if prob > 0.0:
+            actions.append(action)
+            weights.append(prob)
+    if not actions:
+        return fallback_action
+    if len(actions) == 1:
+        return actions[0]
+    return sample_from_weights(actions, weights)
+
+
 def action_from_prob(
     prob_primary: float,
     primary_action: str,
@@ -1609,6 +1952,44 @@ def strategy_log_likelihood(
             log_lik += math.log(prob_realized)
             self_claims.append(realized_self_int)
             opp_claims.append(realized_opp_int)
+        return log_lik
+
+    if game == "promo":
+        log_lik = 0.0
+        self_actions: List[str] = []
+        opp_actions: List[str] = []
+        for idx, (realized_self, realized_opp) in enumerate(realized_history, start=1):
+            probs = promo_action_probabilities(
+                strategy=strategy,
+                self_history_actions=self_actions,
+                opp_history_actions=opp_actions,
+                round_idx=idx,
+            )
+            realized_self_str = str(realized_self)
+            prob_realized = probs.get(realized_self_str, 0.0)
+            prob_realized = min(1.0 - 1e-6, max(1e-6, prob_realized))
+            log_lik += math.log(prob_realized)
+            self_actions.append(realized_self_str)
+            opp_actions.append(str(realized_opp))
+        return log_lik
+
+    if game == "collusion":
+        log_lik = 0.0
+        self_actions: List[str] = []
+        opp_actions: List[str] = []
+        for idx, (realized_self, realized_opp) in enumerate(realized_history, start=1):
+            probs = collusion_action_probabilities(
+                strategy=strategy,
+                self_history_actions=self_actions,
+                opp_history_actions=opp_actions,
+                round_idx=idx,
+            )
+            realized_self_str = str(realized_self)
+            prob_realized = probs.get(realized_self_str, 0.0)
+            prob_realized = min(1.0 - 1e-6, max(1e-6, prob_realized))
+            log_lik += math.log(prob_realized)
+            self_actions.append(realized_self_str)
+            opp_actions.append(str(realized_opp))
         return log_lik
 
     primary_action, _ = binary_action_labels(game, player_idx=player_idx)
@@ -1765,6 +2146,94 @@ def estimate_strategy_rollout_value(
     return value
 
 
+def estimate_promo_rollout_value(
+    player_idx: int,
+    self_strategy: str,
+    opp_strategy: str,
+    round_idx: int,
+    rounds: int,
+    history_self_opp: List[Tuple[str, str]],
+    planner_cfg: PlannerConfig,
+) -> float:
+    max_round = rounds
+    if planner_cfg.planning_horizon > 0:
+        max_round = min(rounds, round_idx + planner_cfg.planning_horizon - 1)
+
+    sim_self_actions = [self_action for self_action, _ in history_self_opp]
+    sim_opp_actions = [opp_action for _, opp_action in history_self_opp]
+    value = 0.0
+
+    for sim_round in range(round_idx, max_round + 1):
+        self_probs = promo_action_probabilities(
+            strategy=self_strategy,
+            self_history_actions=sim_self_actions,
+            opp_history_actions=sim_opp_actions,
+            round_idx=sim_round,
+        )
+        opp_probs = promo_action_probabilities(
+            strategy=opp_strategy,
+            self_history_actions=sim_opp_actions,
+            opp_history_actions=sim_self_actions,
+            round_idx=sim_round,
+        )
+        self_action = sample_action_from_distribution(self_probs)
+        opp_action = sample_action_from_distribution(opp_probs)
+        self_points, _ = player_payoff("promo", player_idx, self_action, opp_action)
+        value += (planner_cfg.discount ** (sim_round - round_idx)) * float(self_points)
+        sim_self_actions.append(self_action)
+        sim_opp_actions.append(opp_action)
+
+    return value
+
+
+def estimate_collusion_rollout_value(
+    player_idx: int,
+    self_strategy: str,
+    opp_strategy: str,
+    round_idx: int,
+    rounds: int,
+    history_self_opp: List[Tuple[str, str]],
+    planner_cfg: PlannerConfig,
+) -> float:
+    max_round = rounds
+    if planner_cfg.planning_horizon > 0:
+        max_round = min(rounds, round_idx + planner_cfg.planning_horizon - 1)
+
+    sim_self_actions = [self_action for self_action, _ in history_self_opp]
+    sim_opp_actions = [opp_action for _, opp_action in history_self_opp]
+    value = 0.0
+
+    for sim_round in range(round_idx, max_round + 1):
+        self_probs = collusion_action_probabilities(
+            strategy=self_strategy,
+            self_history_actions=sim_self_actions,
+            opp_history_actions=sim_opp_actions,
+            round_idx=sim_round,
+        )
+        opp_probs = collusion_action_probabilities(
+            strategy=opp_strategy,
+            self_history_actions=sim_opp_actions,
+            opp_history_actions=sim_self_actions,
+            round_idx=sim_round,
+        )
+        self_action = sample_action_from_distribution(
+            self_probs,
+            action_order=COLLUSION_ACTION_ORDER,
+            fallback_action="N",
+        )
+        opp_action = sample_action_from_distribution(
+            opp_probs,
+            action_order=COLLUSION_ACTION_ORDER,
+            fallback_action="N",
+        )
+        self_points, _ = player_payoff("collusion", player_idx, self_action, opp_action)
+        value += (planner_cfg.discount ** (sim_round - round_idx)) * float(self_points)
+        sim_self_actions.append(self_action)
+        sim_opp_actions.append(opp_action)
+
+    return value
+
+
 def estimate_travelers_rollout_value(
     player_idx: int,
     self_strategy: str,
@@ -1904,6 +2373,160 @@ def choose_ps_br_action(
     value_j = max(value_j_candidates) if value_j_candidates else best_value
     value_f = max(value_f_candidates) if value_f_candidates else best_value
     return chosen_action, value_j, value_f, best_strategy, sampled_opp_strategy
+
+
+def choose_ps_br_promo_action(
+    backend,
+    player_idx: int,
+    round_idx: int,
+    rounds: int,
+    rules_text: str,
+    history_text: str,
+    history_self_opp: List[Tuple[str, str]],
+    planner_cfg: PlannerConfig,
+) -> Tuple[str, float, float, float, str, str]:
+    menu = strategy_menu("promo", player_idx=player_idx)
+    strategy_values: dict[str, List[float]] = {name: [] for name in menu}
+
+    sampled_opp_strategy = sample_opponent_strategy(
+        backend=backend,
+        game="promo",
+        player_idx=player_idx,
+        round_idx=round_idx,
+        rules_text=rules_text,
+        history_self_opp=history_self_opp,
+        planner_cfg=planner_cfg,
+        sample_idx=0,
+    )
+
+    for _sample_idx in range(planner_cfg.samples):
+        for self_strategy in menu:
+            rollout_value = estimate_promo_rollout_value(
+                player_idx=player_idx,
+                self_strategy=self_strategy,
+                opp_strategy=sampled_opp_strategy,
+                round_idx=round_idx,
+                rounds=rounds,
+                history_self_opp=history_self_opp,
+                planner_cfg=planner_cfg,
+            )
+            strategy_values[self_strategy].append(rollout_value)
+
+    avg_values = {name: sum(vals) / float(len(vals)) for name, vals in strategy_values.items()}
+    best_value = max(avg_values.values())
+    best_strategies = [name for name, value in avg_values.items() if abs(value - best_value) < 1e-12]
+    best_strategy = sorted(best_strategies)[0]
+
+    current_self_history = [self_action for self_action, _ in history_self_opp]
+    current_opp_history = [opp_action for _, opp_action in history_self_opp]
+    current_probs = promo_action_probabilities(
+        strategy=best_strategy,
+        self_history_actions=current_self_history,
+        opp_history_actions=current_opp_history,
+        round_idx=round_idx,
+    )
+    chosen_action = sample_action_from_distribution(current_probs)
+
+    value_r_candidates: List[float] = []
+    value_p_candidates: List[float] = []
+    value_z_candidates: List[float] = []
+    for strategy_name, value in avg_values.items():
+        mode_action = promo_strategy_mode_action(
+            strategy=strategy_name,
+            self_history_actions=current_self_history,
+            opp_history_actions=current_opp_history,
+            round_idx=round_idx,
+        )
+        if mode_action == "R":
+            value_r_candidates.append(value)
+        if mode_action == "P":
+            value_p_candidates.append(value)
+        if mode_action == "Z":
+            value_z_candidates.append(value)
+
+    value_r = max(value_r_candidates) if value_r_candidates else best_value
+    value_p = max(value_p_candidates) if value_p_candidates else best_value
+    value_z = max(value_z_candidates) if value_z_candidates else best_value
+    return chosen_action, value_r, value_p, value_z, best_strategy, sampled_opp_strategy
+
+
+def choose_ps_br_collusion_action(
+    backend,
+    player_idx: int,
+    round_idx: int,
+    rounds: int,
+    rules_text: str,
+    history_text: str,
+    history_self_opp: List[Tuple[str, str]],
+    planner_cfg: PlannerConfig,
+) -> Tuple[str, float, float, float, str, str]:
+    menu = strategy_menu("collusion", player_idx=player_idx)
+    strategy_values: dict[str, List[float]] = {name: [] for name in menu}
+
+    sampled_opp_strategy = sample_opponent_strategy(
+        backend=backend,
+        game="collusion",
+        player_idx=player_idx,
+        round_idx=round_idx,
+        rules_text=rules_text,
+        history_self_opp=history_self_opp,
+        planner_cfg=planner_cfg,
+        sample_idx=0,
+    )
+
+    for _sample_idx in range(planner_cfg.samples):
+        for self_strategy in menu:
+            rollout_value = estimate_collusion_rollout_value(
+                player_idx=player_idx,
+                self_strategy=self_strategy,
+                opp_strategy=sampled_opp_strategy,
+                round_idx=round_idx,
+                rounds=rounds,
+                history_self_opp=history_self_opp,
+                planner_cfg=planner_cfg,
+            )
+            strategy_values[self_strategy].append(rollout_value)
+
+    avg_values = {name: sum(vals) / float(len(vals)) for name, vals in strategy_values.items()}
+    best_value = max(avg_values.values())
+    best_strategies = [name for name, value in avg_values.items() if abs(value - best_value) < 1e-12]
+    best_strategy = sorted(best_strategies)[0]
+
+    current_self_history = [self_action for self_action, _ in history_self_opp]
+    current_opp_history = [opp_action for _, opp_action in history_self_opp]
+    current_probs = collusion_action_probabilities(
+        strategy=best_strategy,
+        self_history_actions=current_self_history,
+        opp_history_actions=current_opp_history,
+        round_idx=round_idx,
+    )
+    chosen_action = sample_action_from_distribution(
+        current_probs,
+        action_order=COLLUSION_ACTION_ORDER,
+        fallback_action="N",
+    )
+
+    value_k_candidates: List[float] = []
+    value_n_candidates: List[float] = []
+    value_p_candidates: List[float] = []
+    for strategy_name, value in avg_values.items():
+        mode_action = collusion_strategy_mode_action(
+            strategy=strategy_name,
+            self_history_actions=current_self_history,
+            opp_history_actions=current_opp_history,
+            round_idx=round_idx,
+        )
+        if mode_action == "K":
+            value_k_candidates.append(value)
+        if mode_action == "N":
+            value_n_candidates.append(value)
+        if mode_action == "P":
+            value_p_candidates.append(value)
+
+    value_k = max(value_k_candidates) if value_k_candidates else best_value
+    value_n = max(value_n_candidates) if value_n_candidates else best_value
+    value_p = max(value_p_candidates) if value_p_candidates else best_value
+    return chosen_action, value_k, value_n, value_p, best_strategy, sampled_opp_strategy
 
 
 def choose_ps_br_claim(
@@ -2356,6 +2979,218 @@ def run_deadlock_psbr(
     )
 
 
+def run_promo_psbr(
+    backend_1,
+    backend_2,
+    model_name: str,
+    rounds: int,
+    planner_cfg: PlannerConfig,
+    first_action_mode: str,
+) -> pd.DataFrame:
+    history_1 = ""
+    history_2 = ""
+    history_pairs_1: List[Tuple[str, str]] = []
+    history_pairs_2: List[Tuple[str, str]] = []
+    total_1 = 0
+    total_2 = 0
+    rows: List[List[object]] = []
+
+    question = PROMO_RULES.format(rounds=rounds)
+
+    for round_idx in range(1, rounds + 1):
+        answer_1, v1r, v1p, v1z, strategy_1, sampled_opp_strategy_1 = choose_ps_br_promo_action(
+            backend=backend_1,
+            player_idx=1,
+            round_idx=round_idx,
+            rounds=rounds,
+            rules_text=question,
+            history_text=history_1,
+            history_self_opp=history_pairs_1,
+            planner_cfg=planner_cfg,
+        )
+        answer_2, v2r, v2p, v2z, strategy_2, sampled_opp_strategy_2 = choose_ps_br_promo_action(
+            backend=backend_2,
+            player_idx=2,
+            round_idx=round_idx,
+            rounds=rounds,
+            rules_text=question,
+            history_text=history_2,
+            history_self_opp=history_pairs_2,
+            planner_cfg=planner_cfg,
+        )
+
+        forced_1 = forced_first_action("promo", player_idx=1, mode=first_action_mode) if round_idx == 1 else None
+        forced_2 = forced_first_action("promo", player_idx=2, mode=first_action_mode) if round_idx == 1 else None
+        if forced_1 is not None:
+            answer_1 = forced_1
+        if forced_2 is not None:
+            answer_2 = forced_2
+
+        points_1, points_2 = promo_points(answer_1, answer_2)
+        total_1 += points_1
+        total_2 += points_2
+
+        history_1 = append_history(history_1, round_idx, answer_1, answer_2, points_1, points_2)
+        history_2 = append_history(history_2, round_idx, answer_2, answer_1, points_2, points_1)
+        history_pairs_1.append((answer_1, answer_2))
+        history_pairs_2.append((answer_2, answer_1))
+
+        rows.append(
+            [
+                round_idx,
+                model_name,
+                model_name,
+                answer_1,
+                answer_2,
+                points_1,
+                points_2,
+                total_1,
+                total_2,
+                strategy_1,
+                strategy_2,
+                sampled_opp_strategy_1,
+                sampled_opp_strategy_2,
+                v1r,
+                v1p,
+                v1z,
+                v2r,
+                v2p,
+                v2z,
+            ]
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "round",
+            "player1",
+            "player2",
+            "answer1",
+            "answer2",
+            "points1",
+            "points2",
+            "total1",
+            "total2",
+            "psbr_strategy_p1",
+            "psbr_strategy_p2",
+            "psbr_sampled_opp_strategy_p1",
+            "psbr_sampled_opp_strategy_p2",
+            "psbr_value_r_p1",
+            "psbr_value_p_p1",
+            "psbr_value_z_p1",
+            "psbr_value_r_p2",
+            "psbr_value_p_p2",
+            "psbr_value_z_p2",
+        ],
+    )
+
+
+def run_collusion_psbr(
+    backend_1,
+    backend_2,
+    model_name: str,
+    rounds: int,
+    planner_cfg: PlannerConfig,
+    first_action_mode: str,
+) -> pd.DataFrame:
+    history_1 = ""
+    history_2 = ""
+    history_pairs_1: List[Tuple[str, str]] = []
+    history_pairs_2: List[Tuple[str, str]] = []
+    total_1 = 0
+    total_2 = 0
+    rows: List[List[object]] = []
+
+    question = COLLUSION_RULES.format(rounds=rounds)
+
+    for round_idx in range(1, rounds + 1):
+        answer_1, v1k, v1n, v1p, strategy_1, sampled_opp_strategy_1 = choose_ps_br_collusion_action(
+            backend=backend_1,
+            player_idx=1,
+            round_idx=round_idx,
+            rounds=rounds,
+            rules_text=question,
+            history_text=history_1,
+            history_self_opp=history_pairs_1,
+            planner_cfg=planner_cfg,
+        )
+        answer_2, v2k, v2n, v2p, strategy_2, sampled_opp_strategy_2 = choose_ps_br_collusion_action(
+            backend=backend_2,
+            player_idx=2,
+            round_idx=round_idx,
+            rounds=rounds,
+            rules_text=question,
+            history_text=history_2,
+            history_self_opp=history_pairs_2,
+            planner_cfg=planner_cfg,
+        )
+
+        forced_1 = forced_first_action("collusion", player_idx=1, mode=first_action_mode) if round_idx == 1 else None
+        forced_2 = forced_first_action("collusion", player_idx=2, mode=first_action_mode) if round_idx == 1 else None
+        if forced_1 is not None:
+            answer_1 = forced_1
+        if forced_2 is not None:
+            answer_2 = forced_2
+
+        points_1, points_2 = collusion_points(answer_1, answer_2)
+        total_1 += points_1
+        total_2 += points_2
+
+        history_1 = append_history(history_1, round_idx, answer_1, answer_2, points_1, points_2)
+        history_2 = append_history(history_2, round_idx, answer_2, answer_1, points_2, points_1)
+        history_pairs_1.append((answer_1, answer_2))
+        history_pairs_2.append((answer_2, answer_1))
+
+        rows.append(
+            [
+                round_idx,
+                model_name,
+                model_name,
+                answer_1,
+                answer_2,
+                points_1,
+                points_2,
+                total_1,
+                total_2,
+                strategy_1,
+                strategy_2,
+                sampled_opp_strategy_1,
+                sampled_opp_strategy_2,
+                v1k,
+                v1n,
+                v1p,
+                v2k,
+                v2n,
+                v2p,
+            ]
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "round",
+            "player1",
+            "player2",
+            "answer1",
+            "answer2",
+            "points1",
+            "points2",
+            "total1",
+            "total2",
+            "psbr_strategy_p1",
+            "psbr_strategy_p2",
+            "psbr_sampled_opp_strategy_p1",
+            "psbr_sampled_opp_strategy_p2",
+            "psbr_value_k_p1",
+            "psbr_value_n_p1",
+            "psbr_value_p_p1",
+            "psbr_value_k_p2",
+            "psbr_value_n_p2",
+            "psbr_value_p_p2",
+        ],
+    )
+
+
 def run_asymmetric_binary_psbr(
     backend_1,
     backend_2,
@@ -2619,7 +3454,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--game",
-        choices=["bos", "pd", "deadlock", "samaritan", "lemons", "both", "all"],
+        choices=["bos", "pd", "deadlock", "promo", "collusion", "samaritan", "lemons", "both", "all"],
         default="both",
         help="Which game to run.",
     )
@@ -2639,6 +3474,16 @@ def parse_args() -> argparse.Namespace:
         "--deadlock-output",
         default="ps_br/experiment_deadlock_psbr_gpt_oss_20b.csv",
         help="Output CSV path for Deadlock.",
+    )
+    parser.add_argument(
+        "--promo-output",
+        default="ps_br/experiment_promo_psbr_gpt_oss_20b.csv",
+        help="Output CSV path for Promo.",
+    )
+    parser.add_argument(
+        "--collusion-output",
+        default="ps_br/experiment_collusion_psbr_gpt_oss_20b.csv",
+        help="Output CSV path for Collusion.",
     )
     parser.add_argument(
         "--samaritan-output",
@@ -2704,7 +3549,7 @@ def parse_args() -> argparse.Namespace:
         "--collusive-mode",
         action="store_true",
         help=(
-            "Enable collusive prior guidance in strategy-label inference prompts for BOS/PD/Samaritan/Lemons. "
+            "Enable collusive prior guidance in strategy-label inference prompts for BOS/PD/Promo/Collusion/Samaritan/Lemons. "
             "When enabled, round-1 opponent inference uses normal inference flow (no random fallback shortcut)."
         ),
     )
@@ -2785,7 +3630,7 @@ def main() -> None:
     if args.game == "both":
         selected_games = ["bos", "pd"]
     elif args.game == "all":
-        selected_games = ["bos", "pd", "deadlock", "samaritan", "lemons"]
+        selected_games = ["bos", "pd", "deadlock", "promo", "collusion", "samaritan", "lemons"]
     else:
         selected_games = [args.game]
 
@@ -2904,6 +3749,34 @@ def main() -> None:
         ensure_parent_dir(args.deadlock_output)
         deadlock_df.to_csv(args.deadlock_output, index=False)
         print(f"Wrote Deadlock PS-BR results to {args.deadlock_output}")
+
+    if "promo" in selected_games:
+        promo_df = run_promo_psbr(
+            backend_1,
+            backend_2,
+            args.model,
+            args.rounds,
+            planner_cfg,
+            first_action_mode=args.first_action_mode,
+        )
+        promo_df = add_planner_metadata(promo_df)
+        ensure_parent_dir(args.promo_output)
+        promo_df.to_csv(args.promo_output, index=False)
+        print(f"Wrote Promo PS-BR results to {args.promo_output}")
+
+    if "collusion" in selected_games:
+        collusion_df = run_collusion_psbr(
+            backend_1,
+            backend_2,
+            args.model,
+            args.rounds,
+            planner_cfg,
+            first_action_mode=args.first_action_mode,
+        )
+        collusion_df = add_planner_metadata(collusion_df)
+        ensure_parent_dir(args.collusion_output)
+        collusion_df.to_csv(args.collusion_output, index=False)
+        print(f"Wrote Collusion PS-BR results to {args.collusion_output}")
 
     if "samaritan" in selected_games:
         samaritan_df = run_samaritan_psbr(

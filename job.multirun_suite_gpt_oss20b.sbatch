@@ -26,6 +26,7 @@ RUNS="${RUNS:-100}"
 ROUNDS="${ROUNDS:-100}"
 SEED_START="${SEED_START:-0}"
 FIRST_ACTION_MODE="${FIRST_ACTION_MODE:-defect}"
+GAMES="${GAMES:-bos,pd,deadlock,promo,collusion,samaritan,lemons}"
 
 # PS-BR parameters (used when MODE=psbr; harmless otherwise).
 PS_SAMPLES="${PS_SAMPLES:-5}"
@@ -65,7 +66,7 @@ exec > "$OUT_ROOT/slurm_${SLURM_JOB_ID}.out" 2> "$OUT_ROOT/slurm_${SLURM_JOB_ID}
 echo "OUT_ROOT=$OUT_ROOT"
 echo "HOST=$(hostname)"
 echo "START_TIME=$(date -Iseconds)"
-echo "PARAMS mode=$MODE runs=$RUNS rounds=$ROUNDS seed_start=$SEED_START first_action_mode=$FIRST_ACTION_MODE"
+echo "PARAMS mode=$MODE runs=$RUNS rounds=$ROUNDS seed_start=$SEED_START first_action_mode=$FIRST_ACTION_MODE games=$GAMES"
 echo "PARAMS ps_samples=$PS_SAMPLES planning_horizon=$PLANNING_HORIZON discount=$DISCOUNT sample_temperature=$SAMPLE_TEMPERATURE strategy_inference=$STRATEGY_INFERENCE strategy_memory_rounds=$STRATEGY_MEMORY_ROUNDS collusive_mode=$COLLUSIVE_MODE"
 
 COLLUSIVE_FLAG=()
@@ -107,6 +108,7 @@ python run_multirun_suite.py \
   --runs "$RUNS" \
   --rounds "$ROUNDS" \
   --seed-start "$SEED_START" \
+  --games "$GAMES" \
   --first-action-mode "$FIRST_ACTION_MODE" \
   --output-dir "$OUT_ROOT" \
   --device-map cuda \

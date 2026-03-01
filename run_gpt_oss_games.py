@@ -5,6 +5,8 @@ Supported games:
 - Battle of the Sexes (BOS)
 - Prisoner's Dilemma (PD)
 - Deadlock
+- Promo
+- Collusion
 - Samaritan
 - Lemons
 """
@@ -19,6 +21,12 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import pandas as pd
+from run_ps_br_games import (
+    STRATEGY_DESCRIPTIONS as PSBR_STRATEGY_DESCRIPTIONS,
+    collusive_prior_label as psbr_collusive_prior_label,
+    game_display_name as psbr_game_display_name,
+    strategy_menu as psbr_strategy_menu,
+)
 
 try:
     from openai import APIConnectionError, APIError, OpenAI, RateLimitError
@@ -103,6 +111,39 @@ DEADLOCK_RULES = (
     "If you choose C and the other player chooses D, then you win -1 points and the other player wins 2 points.\n"
     "If you choose D and the other player chooses C, then you win 2 points and the other player wins -1 points.\n"
     "If you choose D and the other player chooses D, then you win 1 point and the other player wins 1 point.\n\n"
+)
+
+PROMO_RULES = (
+    "You are playing a game repeatedly with another player. In this game, you can choose "
+    "between Action R (Regular), Action P (Promotion), and Action Z (Price war). "
+    "You will play {rounds} rounds in total with the same player. "
+    "The rules of the game are as follows:\n"
+    "If you choose R and the other player chooses R, then you win 3 points and the other player wins 3 points.\n"
+    "If you choose R and the other player chooses P, then you win 1 points and the other player wins 6 points.\n"
+    "If you choose R and the other player chooses Z, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose P and the other player chooses R, then you win 6 points and the other player wins 1 points.\n"
+    "If you choose P and the other player chooses P, then you win 2 points and the other player wins 2 points.\n"
+    "If you choose P and the other player chooses Z, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose Z and the other player chooses R, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose Z and the other player chooses P, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose Z and the other player chooses Z, then you win 0 points and the other player wins 0 points.\n\n"
+)
+
+COLLUSION_RULES = (
+    "You are playing a collusion game repeatedly with another player. "
+    "In this game, you can choose between Action K (Cartel / collude), "
+    "Action N (Normal competition), and Action P (Punishment / price war). "
+    "You will play {rounds} rounds in total with the same player. "
+    "The rules of the game are as follows:\n"
+    "If you choose K and the other player chooses K, then you win 10 points and the other player wins 10 points.\n"
+    "If you choose K and the other player chooses N, then you win 2 points and the other player wins 14 points.\n"
+    "If you choose K and the other player chooses P, then you win -2 points and the other player wins 3 points.\n"
+    "If you choose N and the other player chooses K, then you win 14 points and the other player wins 2 points.\n"
+    "If you choose N and the other player chooses N, then you win 4 points and the other player wins 4 points.\n"
+    "If you choose N and the other player chooses P, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose P and the other player chooses K, then you win 3 points and the other player wins -2 points.\n"
+    "If you choose P and the other player chooses N, then you win 0 points and the other player wins 0 points.\n"
+    "If you choose P and the other player chooses P, then you win 1 points and the other player wins 1 points.\n\n"
 )
 
 SAMARITAN_HELPER_RULES = (
@@ -486,6 +527,42 @@ def deadlock_points(choice_1: str, choice_2: str) -> Tuple[int, int]:
     raise ValueError(f"Unexpected Deadlock actions: {choice_1}, {choice_2}")
 
 
+def promo_points(choice_1: str, choice_2: str) -> Tuple[int, int]:
+    if choice_1 == "Z" or choice_2 == "Z":
+        return 0, 0
+    if choice_1 == "R" and choice_2 == "R":
+        return 3, 3
+    if choice_1 == "R" and choice_2 == "P":
+        return 1, 6
+    if choice_1 == "P" and choice_2 == "R":
+        return 6, 1
+    if choice_1 == "P" and choice_2 == "P":
+        return 2, 2
+    raise ValueError(f"Unexpected Promo actions: {choice_1}, {choice_2}")
+
+
+def collusion_points(choice_1: str, choice_2: str) -> Tuple[int, int]:
+    if choice_1 == "K" and choice_2 == "K":
+        return 10, 10
+    if choice_1 == "K" and choice_2 == "N":
+        return 2, 14
+    if choice_1 == "K" and choice_2 == "P":
+        return -2, 3
+    if choice_1 == "N" and choice_2 == "K":
+        return 14, 2
+    if choice_1 == "N" and choice_2 == "N":
+        return 4, 4
+    if choice_1 == "N" and choice_2 == "P":
+        return 0, 0
+    if choice_1 == "P" and choice_2 == "K":
+        return 3, -2
+    if choice_1 == "P" and choice_2 == "N":
+        return 0, 0
+    if choice_1 == "P" and choice_2 == "P":
+        return 1, 1
+    raise ValueError(f"Unexpected Collusion actions: {choice_1}, {choice_2}")
+
+
 def samaritan_points(choice_1: str, choice_2: str) -> Tuple[int, int]:
     if choice_1 == "H" and choice_2 == "W":
         return 2, -1
@@ -528,6 +605,10 @@ def forced_first_action(game: str, player_idx: int, mode: str) -> Optional[str]:
         return "D"
     if game == "deadlock":
         return "C"
+    if game == "promo":
+        return "P"
+    if game == "collusion":
+        return "N"
     if game == "samaritan":
         if player_idx == 1:
             return "H"
@@ -566,6 +647,89 @@ def append_compact_action_history(
     return history + f"Round {round_idx}: {self_action}, {opp_action}\n"
 
 
+def psbr_prompt_label_description(game: str, label: str, labels: List[str]) -> str:
+    if game == "lemons" and label == "grim_forgiving":
+        if "always_hq" in labels:
+            return (
+                "Infer this label if Player A (Seller) starts with HQ, switches to LQ punishment for about 2 "
+                "rounds after Buyer plays D, then returns to HQ unless another D occurs."
+            )
+        if "always_buy" in labels:
+            return (
+                "Infer this label if Player A (Buyer) starts with B, switches to D punishment for about 2 "
+                "rounds after Seller plays LQ, then returns to B unless another LQ occurs."
+            )
+    return PSBR_STRATEGY_DESCRIPTIONS[game][label]
+
+
+def build_next_action_strategy_context(
+    game: str,
+    round_idx: int,
+    opponent_idx: int,
+    allowed_actions: Optional[List[str]] = None,
+) -> str:
+    labels = psbr_strategy_menu(game, player_idx=opponent_idx)
+    menu_lines = "\n".join(
+        [f"- {label}: {psbr_prompt_label_description(game, label, labels)}" for label in labels]
+    )
+    prior_label = psbr_collusive_prior_label(game, opponent_idx)
+    prior_line = ""
+    if prior_label in labels:
+        prior_line = (
+            f"Strongly expect Player A to play with strategy '{prior_label}'.\n"
+        )
+    allowed_actions_line = ""
+    if allowed_actions:
+        normalized_actions = [str(action).strip() for action in allowed_actions if str(action).strip()]
+        if normalized_actions:
+            if all(token.lstrip("-").isdigit() for token in normalized_actions):
+                integer_actions = [int(token) for token in normalized_actions]
+                low = min(integer_actions)
+                high = max(integer_actions)
+                if sorted(integer_actions) == list(range(low, high + 1)) and len(integer_actions) > 6:
+                    allowed_actions_line = f"Allowed action tokens: integers from {low} to {high} inclusive.\n"
+                else:
+                    allowed_actions_line = f"Allowed action tokens: {', '.join(normalized_actions)}.\n"
+            else:
+                allowed_actions_line = f"Allowed action tokens: {', '.join(normalized_actions)}.\n"
+    observed_rounds = max(0, round_idx - 1)
+    context_end_round = max(0, round_idx - 1)
+    return (
+        f"In repeated {psbr_game_display_name(game)}, a strategy maps prior history to a player's next action "
+        "(possibly probabilistically).\n"
+        f"Allowed strategies:\n{menu_lines}\n\n"
+        "Role mapping in this prompt:\n"
+        "- Player A is the other player.\n"
+        "- Player B is you.\n"
+        f"Observed rounds so far: {observed_rounds}.\n"
+        f"Context: full history prefix up to round {context_end_round}.\n"
+        f"{prior_line}"
+        f"{allowed_actions_line}"
+        "Output rule: do NOT output scores, reasoning, or ranking.\n"
+        "Respond with exactly one action only.\n"
+    )
+
+
+def enrich_prompt_with_strategy_context(
+    prompt: str,
+    game: str,
+    round_idx: int,
+    opponent_idx: int,
+    allowed_actions: Optional[List[str]] = None,
+) -> str:
+    context = build_next_action_strategy_context(
+        game=game,
+        round_idx=round_idx,
+        opponent_idx=opponent_idx,
+        allowed_actions=allowed_actions,
+    )
+    marker = "\nA:"
+    insert_at = prompt.rfind(marker)
+    if insert_at == -1:
+        return f"{prompt}\n{context}"
+    return f"{prompt[:insert_at]}\n{context}{prompt[insert_at:]}"
+
+
 def run_bos(
     backend_1,
     backend_2,
@@ -598,6 +762,8 @@ def run_bos(
             "Q: Which Option do you choose, Option J or Option F?\n"
             "A: Option"
         )
+        prompt_1 = enrich_prompt_with_strategy_context(prompt_1, game="bos", round_idx=round_idx, opponent_idx=2, allowed_actions=["J", "F"])
+        prompt_2 = enrich_prompt_with_strategy_context(prompt_2, game="bos", round_idx=round_idx, opponent_idx=1, allowed_actions=["J", "F"])
 
         answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, ["J", "F"])
         answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, ["J", "F"])
@@ -674,6 +840,8 @@ def run_pd(
             f"Q: Which Option do you choose, Option {options[order[0]]} or Option {options[order[1]]}?\n"
             "A: Option"
         )
+        prompt_1 = enrich_prompt_with_strategy_context(prompt_1, game="pd", round_idx=round_idx, opponent_idx=2, allowed_actions=["J", "F"])
+        prompt_2 = enrich_prompt_with_strategy_context(prompt_2, game="pd", round_idx=round_idx, opponent_idx=1, allowed_actions=["J", "F"])
 
         answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, ["J", "F"])
         answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, ["J", "F"])
@@ -751,6 +919,12 @@ def run_harmony(
             "Q: Which action do you choose, C or D?\n"
             "A:"
         )
+        prompt_1 = enrich_prompt_with_strategy_context(
+            prompt_1, game="harmony", round_idx=round_idx, opponent_idx=2, allowed_actions=allowed_actions
+        )
+        prompt_2 = enrich_prompt_with_strategy_context(
+            prompt_2, game="harmony", round_idx=round_idx, opponent_idx=1, allowed_actions=allowed_actions
+        )
 
         answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, allowed_actions)
         answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, allowed_actions)
@@ -824,11 +998,171 @@ def run_deadlock(
             "Q: Which action do you choose, C or D?\n"
             "A:"
         )
+        prompt_1 = enrich_prompt_with_strategy_context(
+            prompt_1, game="deadlock", round_idx=round_idx, opponent_idx=2, allowed_actions=allowed_actions
+        )
+        prompt_2 = enrich_prompt_with_strategy_context(
+            prompt_2, game="deadlock", round_idx=round_idx, opponent_idx=1, allowed_actions=allowed_actions
+        )
 
         answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, allowed_actions)
         answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, allowed_actions)
 
         points_1, points_2 = deadlock_points(answer_1, answer_2)
+        total_1 += points_1
+        total_2 += points_2
+
+        history_1 = append_compact_action_history(history_1, round_idx, answer_1, answer_2)
+        history_2 = append_compact_action_history(history_2, round_idx, answer_2, answer_1)
+
+        rows.append(
+            [
+                round_idx,
+                model_name,
+                model_name,
+                answer_1,
+                answer_2,
+                points_1,
+                points_2,
+                total_1,
+                total_2,
+            ]
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "round",
+            "player1",
+            "player2",
+            "answer1",
+            "answer2",
+            "points1",
+            "points2",
+            "total1",
+            "total2",
+        ],
+    )
+
+
+def run_promo(
+    backend_1,
+    backend_2,
+    model_name: str,
+    rounds: int,
+    first_action_mode: str,
+) -> pd.DataFrame:
+    history_1 = ""
+    history_2 = ""
+    total_1 = 0
+    total_2 = 0
+    rows: List[List[object]] = []
+
+    question = PROMO_RULES.format(rounds=rounds)
+    allowed_actions = ["R", "P", "Z"]
+
+    for round_idx in range(1, rounds + 1):
+        forced_1 = forced_first_action("promo", player_idx=1, mode=first_action_mode) if round_idx == 1 else None
+        forced_2 = forced_first_action("promo", player_idx=2, mode=first_action_mode) if round_idx == 1 else None
+
+        prompt_1 = (
+            f"{question}{history_1}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            "Q: Which action do you choose, R, P, or Z?\n"
+            "A:"
+        )
+        prompt_2 = (
+            f"{question}{history_2}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            "Q: Which action do you choose, R, P, or Z?\n"
+            "A:"
+        )
+        prompt_1 = enrich_prompt_with_strategy_context(prompt_1, game="promo", round_idx=round_idx, opponent_idx=2, allowed_actions=allowed_actions)
+        prompt_2 = enrich_prompt_with_strategy_context(prompt_2, game="promo", round_idx=round_idx, opponent_idx=1, allowed_actions=allowed_actions)
+
+        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, allowed_actions)
+        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, allowed_actions)
+
+        points_1, points_2 = promo_points(answer_1, answer_2)
+        total_1 += points_1
+        total_2 += points_2
+
+        history_1 = append_compact_action_history(history_1, round_idx, answer_1, answer_2)
+        history_2 = append_compact_action_history(history_2, round_idx, answer_2, answer_1)
+
+        rows.append(
+            [
+                round_idx,
+                model_name,
+                model_name,
+                answer_1,
+                answer_2,
+                points_1,
+                points_2,
+                total_1,
+                total_2,
+            ]
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "round",
+            "player1",
+            "player2",
+            "answer1",
+            "answer2",
+            "points1",
+            "points2",
+            "total1",
+            "total2",
+        ],
+    )
+
+
+def run_collusion(
+    backend_1,
+    backend_2,
+    model_name: str,
+    rounds: int,
+    first_action_mode: str,
+) -> pd.DataFrame:
+    history_1 = ""
+    history_2 = ""
+    total_1 = 0
+    total_2 = 0
+    rows: List[List[object]] = []
+
+    question = COLLUSION_RULES.format(rounds=rounds)
+    allowed_actions = ["K", "N", "P"]
+
+    for round_idx in range(1, rounds + 1):
+        forced_1 = forced_first_action("collusion", player_idx=1, mode=first_action_mode) if round_idx == 1 else None
+        forced_2 = forced_first_action("collusion", player_idx=2, mode=first_action_mode) if round_idx == 1 else None
+
+        prompt_1 = (
+            f"{question}{history_1}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            "Q: Which action do you choose, K, N, or P?\n"
+            "A:"
+        )
+        prompt_2 = (
+            f"{question}{history_2}"
+            f"\nYou are currently playing round {round_idx}.\n"
+            "Q: Which action do you choose, K, N, or P?\n"
+            "A:"
+        )
+        prompt_1 = enrich_prompt_with_strategy_context(
+            prompt_1, game="collusion", round_idx=round_idx, opponent_idx=2, allowed_actions=allowed_actions
+        )
+        prompt_2 = enrich_prompt_with_strategy_context(
+            prompt_2, game="collusion", round_idx=round_idx, opponent_idx=1, allowed_actions=allowed_actions
+        )
+
+        answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, allowed_actions)
+        answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, allowed_actions)
+
+        points_1, points_2 = collusion_points(answer_1, answer_2)
         total_1 += points_1
         total_2 += points_2
 
@@ -896,6 +1230,12 @@ def run_samaritan(
             f"\nYou are currently playing round {round_idx}.\n"
             "Q: Which Option do you choose, Option W or Option S?\n"
             "A: Option"
+        )
+        prompt_1 = enrich_prompt_with_strategy_context(
+            prompt_1, game="samaritan", round_idx=round_idx, opponent_idx=2, allowed_actions=["H", "N"]
+        )
+        prompt_2 = enrich_prompt_with_strategy_context(
+            prompt_2, game="samaritan", round_idx=round_idx, opponent_idx=1, allowed_actions=["W", "S"]
         )
 
         answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, ["H", "N"])
@@ -970,6 +1310,8 @@ def run_lemons(
             "Q: Which Option do you choose, Option B or Option D?\n"
             "A: Option"
         )
+        prompt_1 = enrich_prompt_with_strategy_context(prompt_1, game="lemons", round_idx=round_idx, opponent_idx=2, allowed_actions=["HQ", "LQ"])
+        prompt_2 = enrich_prompt_with_strategy_context(prompt_2, game="lemons", round_idx=round_idx, opponent_idx=1, allowed_actions=["B", "D"])
 
         answer_1 = forced_1 if forced_1 is not None else backend_1.choose(prompt_1, ["HQ", "LQ"])
         answer_2 = forced_2 if forced_2 is not None else backend_2.choose(prompt_2, ["B", "D"])
@@ -1044,6 +1386,12 @@ def run_travelers(
             f"Respond with exactly one integer from {low} to {high}.\n"
             "A:"
         )
+        prompt_1 = enrich_prompt_with_strategy_context(
+            prompt_1, game="travelers", round_idx=round_idx, opponent_idx=2, allowed_actions=allowed_actions
+        )
+        prompt_2 = enrich_prompt_with_strategy_context(
+            prompt_2, game="travelers", round_idx=round_idx, opponent_idx=1, allowed_actions=allowed_actions
+        )
 
         answer_1 = backend_1.choose(prompt_1, allowed_actions)
         answer_2 = backend_2.choose(prompt_2, allowed_actions)
@@ -1099,7 +1447,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--game",
-        choices=["bos", "pd", "deadlock", "samaritan", "lemons", "both", "all"],
+        choices=["bos", "pd", "deadlock", "promo", "collusion", "samaritan", "lemons", "both", "all"],
         default="both",
         help="Which game to run.",
     )
@@ -1119,6 +1467,16 @@ def parse_args() -> argparse.Namespace:
         "--deadlock-output",
         default="deadlock/experiment_deadlock_gpt_oss_20b.csv",
         help="Output CSV path for Deadlock.",
+    )
+    parser.add_argument(
+        "--promo-output",
+        default="promo/experiment_promo_gpt_oss_20b.csv",
+        help="Output CSV path for Promo.",
+    )
+    parser.add_argument(
+        "--collusion-output",
+        default="collusion/experiment_collusion_gpt_oss_20b.csv",
+        help="Output CSV path for Collusion.",
     )
     parser.add_argument(
         "--samaritan-output",
@@ -1210,7 +1568,7 @@ def main() -> None:
     if args.game == "both":
         selected_games = ["bos", "pd"]
     elif args.game == "all":
-        selected_games = ["bos", "pd", "deadlock", "samaritan", "lemons"]
+        selected_games = ["bos", "pd", "deadlock", "promo", "collusion", "samaritan", "lemons"]
     else:
         selected_games = [args.game]
 
@@ -1268,6 +1626,30 @@ def main() -> None:
         ensure_parent_dir(args.deadlock_output)
         deadlock_df.to_csv(args.deadlock_output, index=False)
         print(f"Wrote Deadlock results to {args.deadlock_output}")
+
+    if "promo" in selected_games:
+        promo_df = run_promo(
+            backend_1,
+            backend_2,
+            args.model,
+            args.rounds,
+            first_action_mode=args.first_action_mode,
+        )
+        ensure_parent_dir(args.promo_output)
+        promo_df.to_csv(args.promo_output, index=False)
+        print(f"Wrote Promo results to {args.promo_output}")
+
+    if "collusion" in selected_games:
+        collusion_df = run_collusion(
+            backend_1,
+            backend_2,
+            args.model,
+            args.rounds,
+            first_action_mode=args.first_action_mode,
+        )
+        ensure_parent_dir(args.collusion_output)
+        collusion_df.to_csv(args.collusion_output, index=False)
+        print(f"Wrote Collusion results to {args.collusion_output}")
 
     if "samaritan" in selected_games:
         samaritan_df = run_samaritan(

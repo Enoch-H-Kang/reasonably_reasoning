@@ -1,6 +1,0 @@
-mode,game,runs,mean_total_score,std_total_score,min_total_score,max_total_score,mean_total1,mean_total2,mean_elapsed_sec
-psbr,bos,1,340.0,0.0,340.0,340.0,143.0,197.0,389.6256060600281
-psbr,deadlock,1,798.0,0.0,798.0,798.0,399.0,399.0,343.0206413269043
-psbr,lemons,1,736.0,0.0,736.0,736.0,411.0,325.0,494.73443961143494
-psbr,pd,1,2648.0,0.0,2648.0,2648.0,1319.0,1329.0,370.8208680152893
-psbr,samaritan,1,174.0,0.0,174.0,174.0,351.0,-177.0,411.0960052013397
