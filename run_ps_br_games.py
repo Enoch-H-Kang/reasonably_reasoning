@@ -1531,8 +1531,15 @@ def collusion_abreu_punishment_timer(
     punish_remaining = 0
     for self_action, opp_action in zip(self_history_actions, opp_history_actions):
         if punish_remaining > 0:
-            punish_remaining -= 1
+            # During punishment, the prescribed path is (P,P). Any deviation
+            # restarts the 2-round punishment window; otherwise count down.
+            if self_action != "P" or opp_action != "P":
+                punish_remaining = 2
+            else:
+                punish_remaining -= 1
             continue
+
+        # On cooperative path, any deviation from (K,K) triggers punishment.
         if self_action != "K" or opp_action != "K":
             punish_remaining = 2
     return punish_remaining
